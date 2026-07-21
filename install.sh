@@ -85,7 +85,11 @@ fi
 ./venv/bin/pip install -q "python-telegram-bot[job-queue]>=22" psutil requests
 
 read -p "Entrez le token de votre Bot Telegram : " BOT_TOKEN
+read -p "Entrez votre fuseau horaire (ex: Africa/Douala, Europe/Paris) [Entrée pour Africa/Douala] : " TZ_INPUT
+TZ_INPUT=${TZ_INPUT:-Africa/Douala}
+
 echo "TELEGRAM_BOT_TOKEN=$BOT_TOKEN" > .env_bot
+echo "TZ=$TZ_INPUT" >> .env_bot
 
 BOT_DIR=$(pwd)
 sudo tee /etc/systemd/system/monitoring-bot.service > /dev/null <<EOF
