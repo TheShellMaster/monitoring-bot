@@ -1,0 +1,4 @@
+.env_bot
+.bot_chat_ids.json
+__pycache__/
+*.pyc
