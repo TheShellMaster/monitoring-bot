@@ -261,8 +261,9 @@ async def help(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 # --- VPN CRM LOGIC ---
-W_USER, W_PASS, W_DUR, W_LIM = range(4)
-W_EDIT_PASS, W_EDIT_EXP, W_EDIT_LIM = range(4, 7)
+# --- VPN CRM LOGIC ---
+W_USER, W_PASS, W_DUR = range(3)
+W_EDIT_PASS, W_EDIT_EXP = range(3, 5)
 
 async def vpn_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     vpn_manager.init_db()
@@ -312,17 +313,15 @@ async def vpn_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not row:
             await q.message.reply_text("Compte introuvable.")
             return ConversationHandler.END
-        u, p, exp, lim = row
+        u, p, exp = row
         out = (
             f"👤 <b>Compte : {u}</b>\n"
             f"🔑 Pass : <code>{p}</code>\n"
             f"⏳ Expire : {exp}\n"
-            f"📊 Limite : {lim} Mo\n"
         )
         kb = [
             [InlineKeyboardButton("✏️ Changer Pass", callback_data=f"editpass_{u}")],
             [InlineKeyboardButton("⏳ Changer Date Expiration", callback_data=f"editexp_{u}")],
-            [InlineKeyboardButton("📊 Changer Quota", callback_data=f"editlim_{u}")],
             [InlineKeyboardButton("❌ Supprimer le Compte", callback_data=f"vpndel_{u}")]
         ]
         await q.message.reply_text(out, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
@@ -335,14 +334,10 @@ async def vpn_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if d.startswith("editexp_"):
         ctx.user_data['edit_user'] = d.split("_", 1)[1]
+        await q.message.reply_text(
             f"⏳ Entrez la **nouvelle date et heure d'expiration** au format `YYYY-MM-DD HH:MM`\n"
             f"Exemple : `2026-08-20 14:30`", parse_mode="Markdown")
         return W_EDIT_EXP
-
-    if d.startswith("editlim_"):
-        ctx.user_data['edit_user'] = d.split("_", 1)[1]
-        await q.message.reply_text("📊 Entrez la **nouvelle limite en Mo** (ex: 500) :", parse_mode="Markdown")
-        return W_EDIT_LIM
 
     if d == "vpn_del_menu":
         rows = vpn_manager.list_users()
@@ -379,52 +374,19 @@ async def v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         datetime.datetime.strptime(val, "%Y-%m-%d %H:%M")
         ctx.user_data['v_dur'] = val
-        kb = [
-            [InlineKeyboardButton("📦 Entrer en Mo (Mégaoctets)", callback_data="lim_mo")],
-            [InlineKeyboardButton("💾 Entrer en Go (Gigaoctets)", callback_data="lim_go")],
-            [InlineKeyboardButton("♾ Illimité", callback_data="lim_inf")],
-        ]
-        await upd.message.reply_text("📊 Quelle est l'unité de la limite de données ?", reply_markup=InlineKeyboardMarkup(kb))
-        return W_LIM
+        return await _create_account(upd, ctx)
     except:
         await upd.message.reply_text("Format invalide. Veuillez entrer la date au format `YYYY-MM-DD HH:MM`.")
         return W_DUR
-
-async def v_lim_unit(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Callback quand l'user choisit Mo/Go/Illimité"""
-    q = upd.callback_query
-    await q.answer()
-    unit = q.data  # lim_mo / lim_go / lim_inf
-    if unit == "lim_inf":
-        ctx.user_data['v_lim'] = 0
-        ctx.user_data['v_lim_unit'] = "Illimité"
-        return await _create_account(upd, ctx)
-    else:
-        ctx.user_data['v_lim_unit'] = "Mo" if unit == "lim_mo" else "Go"
-        label = "Mo (Mégaoctets)" if unit == "lim_mo" else "Go (Gigaoctets)"
-        await q.message.reply_text(f"📊 Entrez la valeur de la limite en **{label}** (ex: 500) :", parse_mode="Markdown")
-        return W_LIM
-
-async def v_lim(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    try:
-        ctx.user_data['v_lim'] = float(upd.message.text.strip())
-        return await _create_account(upd, ctx)
-    except:
-        await upd.message.reply_text("Veuillez entrer un nombre valide pour la limite.")
-        return W_LIM
 
 async def _create_account(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = ctx.user_data['v_user']
     p = ctx.user_data['v_pass']
     d = ctx.user_data['v_dur']
-    l = ctx.user_data['v_lim']
-    unit = ctx.user_data.get('v_lim_unit', 'Go')
-    # Convert to MB for storage
-    l_mb = 0 if unit == 'Illimité' else (l if unit == 'Mo' else l * 1024)
 
     msg_obj = upd.message or upd.callback_query.message
     await msg_obj.reply_text("⏳ Création du compte en cours sur le serveur...")
-    ok, msg = vpn_manager.add_user(u, p, d, l_mb)
+    ok, msg = vpn_manager.add_user(u, p, d)
 
     if ok:
         import urllib.request
@@ -432,7 +394,6 @@ async def _create_account(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         try: ip = urllib.request.urlopen("https://api.ipify.org").read().decode('utf8')
         except: pass
 
-        quota_str = "Illimité" if l_mb == 0 else f"{l} {unit}"
         res = (
             f"🟢 <b>Compte VPN Créé avec Succès !</b>\n\n"
             f"🌐 <b>Host / IP</b> : <code>{ip}</code>\n"
@@ -440,7 +401,6 @@ async def _create_account(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"👤 <b>User</b> : <code>{u}</code>\n"
             f"🔑 <b>Pass</b> : <code>{p}</code>\n"
             f"⏳ <b>Expire le</b> : {d}\n"
-            f"📊 <b>Quota</b> : {quota_str}\n"
         )
         await msg_obj.reply_text(res, parse_mode="HTML")
     else:
@@ -459,17 +419,6 @@ async def edit_exp(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     val = upd.message.text.strip()
     ok, msg = vpn_manager.update_user_field(user, "expires_at", val)
     await upd.message.reply_text(f"Mise à jour de l'expiration de {user} : {msg}")
-    return ConversationHandler.END
-
-async def edit_lim(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user = ctx.user_data['edit_user']
-    val = upd.message.text.strip()
-    try:
-        val_f = float(val)
-        ok, msg = vpn_manager.update_user_field(user, "data_limit_gb", val_f)
-        await upd.message.reply_text(f"Mise à jour de la limite de {user} : {msg}")
-    except:
-        await upd.message.reply_text("Valeur numérique invalide.")
     return ConversationHandler.END
 
 async def v_cancel(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -670,20 +619,14 @@ def main():
         entry_points=[
             CallbackQueryHandler(vpn_cb, pattern="^vpn_new$"),
             CallbackQueryHandler(vpn_cb, pattern="^editpass_"),
-            CallbackQueryHandler(vpn_cb, pattern="^editexp_"),
-            CallbackQueryHandler(vpn_cb, pattern="^editlim_")
+            CallbackQueryHandler(vpn_cb, pattern="^editexp_")
         ],
         states={
             W_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_user)],
             W_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_pass)],
             W_DUR:  [MessageHandler(filters.TEXT & ~filters.COMMAND, v_dur)],
-            W_LIM:  [
-                CallbackQueryHandler(v_lim_unit, pattern="^lim_(mo|go|inf)$"),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, v_lim),
-            ],
             W_EDIT_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pass)],
-            W_EDIT_EXP:  [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exp)],
-            W_EDIT_LIM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_lim)],
+            W_EDIT_EXP:  [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exp)]
         },
         fallbacks=[CommandHandler("cancel", v_cancel)],
         per_message=False,

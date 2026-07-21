@@ -20,9 +20,9 @@ Bot Telegram tout-en-un pour surveiller votre serveur Linux en temps réel et g�
 ### 🔐 Gestionnaire ZiVPN (UDP)
 La commande `/vpn` ouvre un CRM interactif complet pour votre serveur VPN :
 - **Serveur ZiVPN** : Démarrer / Stopper le service système `zivpn` depuis Telegram.
-- **Créer des accès** : Demande interactive (Utilisateur > Mot de passe > Date d'expiration > Quota Mo/Go/Illimité).
-- **Modification Complète** : Changer le mot de passe, l'expiration (précision à l'heure près `YYYY-MM-DD HH:MM:SS`) ou le quota à tout moment.
-- **Suppression** : Un clic pour bannir un utilisateur et couper sa connexion (`pkill`).
+- **Créer des accès** : Demande interactive (Utilisateur > Mot de passe > Date et Heure d'expiration).
+- **Modification Complète** : Changer le mot de passe ou l'expiration (précision à la minute près `YYYY-MM-DD HH:MM`) à tout moment.
+- **Suppression/Verrouillage** : Un clic pour bannir un utilisateur et couper sa connexion (`pkill`).
 - **Synchronisation** : Mise à jour automatique de `/etc/zivpn/config.json`.
 
 ---
@@ -68,3 +68,6 @@ echo "TELEGRAM_BOT_TOKEN=votre_token_ici" > .env_bot
 |------------|--------|
 | ZiVPN Serveur | Linux x86_64, ARM64, ARM |
 | Bot Python | Windows, macOS, Linux |
+
+---
+*Tags pour Google et GitHub SEO: Telegram Bot, Server Monitoring, ZiVPN Manager, UDP VPN, VPN CRM, SysAdmin, DevOps, Python, Botfather, psutil, Linux Server, Ubuntu VPN Setup.*

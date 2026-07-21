@@ -28,7 +28,6 @@ def init_db():
             username TEXT UNIQUE NOT NULL,
             password TEXT NOT NULL,
             duration_days INTEGER,
-            data_limit_gb REAL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             expires_at TIMESTAMP
         )
@@ -66,7 +65,7 @@ def _update_zivpn_config(username, action="add"):
         log.error(f"Error updating zivpn config: {e}")
         return False
 
-def add_user(username, password, expires_at_str, data_limit_gb):
+def add_user(username, password, expires_at_str):
     try:
         expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M")
     except:
@@ -89,9 +88,9 @@ def add_user(username, password, expires_at_str, data_limit_gb):
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
         c.execute('''
-            INSERT INTO vpn_users (username, password, duration_days, data_limit_gb, expires_at)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (username, password, duration_hours, data_limit_gb, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
+            INSERT INTO vpn_users (username, password, expires_at)
+            VALUES (?, ?, ?)
+        ''', (username, password, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         conn.close()
         return True, "Compte cree avec succes."
@@ -143,7 +142,7 @@ def unlock_user(username):
 def list_users():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT username, password, expires_at, data_limit_gb FROM vpn_users')
+    c.execute('SELECT username, password, expires_at FROM vpn_users')
     rows = c.fetchall()
     conn.close()
     return rows
@@ -151,7 +150,7 @@ def list_users():
 def get_user(username):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    c.execute('SELECT username, password, expires_at, data_limit_gb FROM vpn_users WHERE username=?', (username,))
+    c.execute('SELECT username, password, expires_at FROM vpn_users WHERE username=?', (username,))
     row = c.fetchone()
     conn.close()
     return row
@@ -176,8 +175,6 @@ def update_user_field(username, field, value):
                 
             col = "expires_at"
             value = dt.strftime("%Y-%m-%d %H:%M:%S")
-        elif field == "data_limit_gb":
-            col = "data_limit_gb"
         else:
             return False, "Champ inconnu"
             
