@@ -85,8 +85,13 @@ fi
 ./venv/bin/pip install -q "python-telegram-bot[job-queue]>=22" psutil requests
 
 read -p "Entrez le token de votre Bot Telegram : " BOT_TOKEN
-read -p "Entrez votre fuseau horaire (ex: Africa/Douala, Europe/Paris) [Entrée pour Africa/Douala] : " TZ_INPUT
-TZ_INPUT=${TZ_INPUT:-Africa/Douala}
+
+echo -e "\e[32m[!] Configuration du fuseau horaire...\e[0m"
+echo "Veuillez sélectionner votre continent puis votre pays dans les menus suivants :"
+TZ_INPUT=$(tzselect)
+if [ -z "$TZ_INPUT" ]; then
+    TZ_INPUT="Africa/Douala"
+fi
 
 echo "TELEGRAM_BOT_TOKEN=$BOT_TOKEN" > .env_bot
 echo "TZ=$TZ_INPUT" >> .env_bot
