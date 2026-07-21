@@ -335,7 +335,8 @@ async def vpn_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     if d.startswith("editexp_"):
         ctx.user_data['edit_user'] = d.split("_", 1)[1]
-        await q.message.reply_text("⏳ Entrez la **nouvelle date et heure d'expiration** au format `YYYY-MM-DD HH:MM:SS`\nExemple : `2026-08-20 14:30:00`", parse_mode="Markdown")
+            f"⏳ Entrez la **nouvelle date et heure d'expiration** au format `YYYY-MM-DD HH:MM`\n"
+            f"Exemple : `2026-08-20 14:30`", parse_mode="Markdown")
         return W_EDIT_EXP
 
     if d.startswith("editlim_"):
@@ -369,12 +370,15 @@ async def v_user(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 async def v_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data['v_pass'] = upd.message.text.strip()
-    await upd.message.reply_text("⏳ Entrez la **durée en jours** (ex: 30) :", parse_mode="Markdown")
+    await upd.message.reply_text("⏳ Entrez la **date et heure d'expiration** au format `YYYY-MM-DD HH:MM` (ex: 2026-08-20 14:30) :", parse_mode="Markdown")
     return W_DUR
 
 async def v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    val = upd.message.text.strip()
+    import datetime
     try:
-        ctx.user_data['v_dur'] = int(upd.message.text.strip())
+        datetime.datetime.strptime(val, "%Y-%m-%d %H:%M")
+        ctx.user_data['v_dur'] = val
         kb = [
             [InlineKeyboardButton("📦 Entrer en Mo (Mégaoctets)", callback_data="lim_mo")],
             [InlineKeyboardButton("💾 Entrer en Go (Gigaoctets)", callback_data="lim_go")],
@@ -383,7 +387,7 @@ async def v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await upd.message.reply_text("📊 Quelle est l'unité de la limite de données ?", reply_markup=InlineKeyboardMarkup(kb))
         return W_LIM
     except:
-        await upd.message.reply_text("Veuillez entrer un nombre entier valide pour la durée.")
+        await upd.message.reply_text("Format invalide. Veuillez entrer la date au format `YYYY-MM-DD HH:MM`.")
         return W_DUR
 
 async def v_lim_unit(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -435,7 +439,7 @@ async def _create_account(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
             f"🔌 <b>Port UDP</b> : <code>443</code>\n"
             f"👤 <b>User</b> : <code>{u}</code>\n"
             f"🔑 <b>Pass</b> : <code>{p}</code>\n"
-            f"⏳ <b>Durée</b> : {d} jours\n"
+            f"⏳ <b>Expire le</b> : {d}\n"
             f"📊 <b>Quota</b> : {quota_str}\n"
         )
         await msg_obj.reply_text(res, parse_mode="HTML")
@@ -480,11 +484,11 @@ async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
         import vpn_manager
         exp_users = vpn_manager.get_expired_users()
         for eu in exp_users:
-            vpn_manager.del_user(eu)
+            vpn_manager.lock_user(eu)
             # Notify admin
             if chat_ids:
                 for cid in list(chat_ids):
-                    await ctx.bot.send_message(chat_id=cid, text=f"⚠️ Le compte VPN <b>{eu}</b> a expiré et a été supprimé automatiquement.", parse_mode="HTML")
+                    await ctx.bot.send_message(chat_id=cid, text=f"⚠️ Le compte VPN <b>{eu}</b> a expiré et a été verrouillé automatiquement.", parse_mode="HTML")
     except Exception as e:
         log.error(f"Error handling expired users: {e}")
 

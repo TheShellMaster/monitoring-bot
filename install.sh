@@ -75,7 +75,7 @@ sudo systemctl restart zivpn.service
 
 echo -e "\e[32m[6] Configuration des autorisations (Sudoers)...\e[0m"
 USER_CURRENT=$USER
-echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
+echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
 sudo chmod 440 /etc/sudoers.d/bot-vpn
 
 echo -e "\e[32m[7] Installation du Bot Telegram...\e[0m"

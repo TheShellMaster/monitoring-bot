@@ -3,9 +3,17 @@ import subprocess
 import logging
 import os
 import json
+import zoneinfo
 from datetime import datetime, timedelta
 
 log = logging.getLogger(__name__)
+
+# Configurable Timezone (Défaut : Africa/Douala)
+TZ = zoneinfo.ZoneInfo(os.getenv("TZ", "Africa/Douala"))
+
+def _now():
+    return datetime.now(TZ)
+
 
 DB_PATH = "vpn_accounts.db"
 ZIVPN_CONF = "/etc/zivpn/config.json"
@@ -58,8 +66,12 @@ def _update_zivpn_config(username, action="add"):
         log.error(f"Error updating zivpn config: {e}")
         return False
 
-def add_user(username, password, duration_days, data_limit_gb):
-    expires_at = datetime.now() + timedelta(days=duration_days)
+def add_user(username, password, expires_at_str, data_limit_gb):
+    try:
+        expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M")
+    except:
+        return False, "Format de date invalide."
+    
     exp_str = expires_at.strftime("%Y-%m-%d")
     
     try:
@@ -79,7 +91,7 @@ def add_user(username, password, duration_days, data_limit_gb):
         c.execute('''
             INSERT INTO vpn_users (username, password, duration_days, data_limit_gb, expires_at)
             VALUES (?, ?, ?, ?, ?)
-        ''', (username, password, duration_days, data_limit_gb, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
+        ''', (username, password, duration_hours, data_limit_gb, expires_at.strftime("%Y-%m-%d %H:%M:%S")))
         conn.commit()
         conn.close()
         return True, "Compte cree avec succes."
@@ -93,7 +105,6 @@ def del_user(username):
     try:
         if not MOCK_MODE:
             subprocess.run(["sudo", "userdel", "-r", username], check=True, timeout=5)
-            # Also kill user processes
             subprocess.run(["sudo", "pkill", "-u", username], stderr=subprocess.DEVNULL)
             
         _update_zivpn_config(username, "del")
@@ -107,6 +118,27 @@ def del_user(username):
     except Exception as e:
         log.error(f"Error deleting user: {e}")
         return False, str(e)
+
+def lock_user(username):
+    try:
+        if not MOCK_MODE:
+            subprocess.run(["sudo", "usermod", "-L", username], check=True, timeout=5)
+            subprocess.run(["sudo", "pkill", "-u", username], stderr=subprocess.DEVNULL)
+        _update_zivpn_config(username, "del")
+        return True
+    except Exception as e:
+        log.error(f"Error locking user: {e}")
+        return False
+
+def unlock_user(username):
+    try:
+        if not MOCK_MODE:
+            subprocess.run(["sudo", "usermod", "-U", username], check=True, timeout=5)
+        _update_zivpn_config(username, "add")
+        return True
+    except Exception as e:
+        log.error(f"Error unlocking user: {e}")
+        return False
 
 def list_users():
     conn = sqlite3.connect(DB_PATH)
@@ -133,13 +165,17 @@ def update_user_field(username, field, value):
                 if proc.returncode != 0: raise Exception("Failed to set password")
             col = "password"
         elif field == "expires_at":
-            # value should be "YYYY-MM-DD HH:MM:SS"
-            dt = datetime.strptime(value, "%Y-%m-%d %H:%M:%S")
+            # value should be "YYYY-MM-DD HH:MM"
+            dt = datetime.strptime(value, "%Y-%m-%d %H:%M")
             if not MOCK_MODE:
                 subprocess.run(["sudo", "chage", "-E", dt.strftime("%Y-%m-%d"), username], check=True, timeout=5)
-                # Note: chage is date only, for hour precision we rely on a cron or the python scheduler
-                # which we will add to monitoring-bot
+            
+            # If the new date is in the future, unlock the user
+            if dt.replace(tzinfo=TZ) > _now():
+                unlock_user(username)
+                
             col = "expires_at"
+            value = dt.strftime("%Y-%m-%d %H:%M:%S")
         elif field == "data_limit_gb":
             col = "data_limit_gb"
         else:
@@ -178,7 +214,7 @@ def check_zivpn_status():
 def get_expired_users():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    now = _now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('SELECT username FROM vpn_users WHERE expires_at <= ?', (now,))
     rows = c.fetchall()
     conn.close()
