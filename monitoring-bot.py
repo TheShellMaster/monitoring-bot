@@ -337,41 +337,73 @@ async def v_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         ctx.user_data['v_dur'] = int(upd.message.text.strip())
-        await upd.message.reply_text("📊 Entrez la **limite en Go** (ex: 50, ou 0 pour illimité) :", parse_mode="Markdown")
+        kb = [
+            [InlineKeyboardButton("📦 Entrer en Mo (Mégaoctets)", callback_data="lim_mo")],
+            [InlineKeyboardButton("💾 Entrer en Go (Gigaoctets)", callback_data="lim_go")],
+            [InlineKeyboardButton("♾ Illimité", callback_data="lim_inf")],
+        ]
+        await upd.message.reply_text("📊 Quelle est l'unité de la limite de données ?", reply_markup=InlineKeyboardMarkup(kb))
         return W_LIM
     except:
         await upd.message.reply_text("Veuillez entrer un nombre entier valide pour la durée.")
         return W_DUR
 
+async def v_lim_unit(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Callback quand l'user choisit Mo/Go/Illimité"""
+    q = upd.callback_query
+    await q.answer()
+    unit = q.data  # lim_mo / lim_go / lim_inf
+    if unit == "lim_inf":
+        ctx.user_data['v_lim'] = 0
+        ctx.user_data['v_lim_unit'] = "Illimité"
+        return await _create_account(upd, ctx)
+    else:
+        ctx.user_data['v_lim_unit'] = "Mo" if unit == "lim_mo" else "Go"
+        label = "Mo (Mégaoctets)" if unit == "lim_mo" else "Go (Gigaoctets)"
+        await q.message.reply_text(f"📊 Entrez la valeur de la limite en **{label}** (ex: 500) :", parse_mode="Markdown")
+        return W_LIM
+
 async def v_lim(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
         ctx.user_data['v_lim'] = float(upd.message.text.strip())
-        u, p, d, l = ctx.user_data['v_user'], ctx.user_data['v_pass'], ctx.user_data['v_dur'], ctx.user_data['v_lim']
-        await upd.message.reply_text("⏳ Création du compte en cours sur le serveur...")
-        ok, msg = vpn_manager.add_user(u, p, d, l)
-        
-        if ok:
-            import urllib.request
-            ip = "127.0.0.1"
-            try: ip = urllib.request.urlopen("https://api.ipify.org").read().decode('utf8')
-            except: pass
-
-            res = (
-                f"🟢 <b>Compte VPN Créé avec Succès !</b>\n\n"
-                f"🌐 <b>Host / IP</b> : <code>{ip}</code>\n"
-                f"🔌 <b>Port UDP</b> : <code>443</code>\n"
-                f"👤 <b>User</b> : <code>{u}</code>\n"
-                f"🔑 <b>Pass</b> : <code>{p}</code>\n"
-                f"⏳ <b>Durée</b> : {d} jours\n"
-                f"📊 <b>Quota</b> : {l} Go\n"
-            )
-            await upd.message.reply_text(res, parse_mode="HTML")
-        else:
-            await upd.message.reply_text(f"❌ Erreur lors de la création : {msg}")
-        return ConversationHandler.END
+        return await _create_account(upd, ctx)
     except:
         await upd.message.reply_text("Veuillez entrer un nombre valide pour la limite.")
         return W_LIM
+
+async def _create_account(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    u = ctx.user_data['v_user']
+    p = ctx.user_data['v_pass']
+    d = ctx.user_data['v_dur']
+    l = ctx.user_data['v_lim']
+    unit = ctx.user_data.get('v_lim_unit', 'Go')
+    # Convert to MB for storage
+    l_mb = 0 if unit == 'Illimité' else (l if unit == 'Mo' else l * 1024)
+
+    msg_obj = upd.message or upd.callback_query.message
+    await msg_obj.reply_text("⏳ Création du compte en cours sur le serveur...")
+    ok, msg = vpn_manager.add_user(u, p, d, l_mb)
+
+    if ok:
+        import urllib.request
+        ip = "127.0.0.1"
+        try: ip = urllib.request.urlopen("https://api.ipify.org").read().decode('utf8')
+        except: pass
+
+        quota_str = "Illimité" if l_mb == 0 else f"{l} {unit}"
+        res = (
+            f"🟢 <b>Compte VPN Créé avec Succès !</b>\n\n"
+            f"🌐 <b>Host / IP</b> : <code>{ip}</code>\n"
+            f"🔌 <b>Port UDP</b> : <code>443</code>\n"
+            f"👤 <b>User</b> : <code>{u}</code>\n"
+            f"🔑 <b>Pass</b> : <code>{p}</code>\n"
+            f"⏳ <b>Durée</b> : {d} jours\n"
+            f"📊 <b>Quota</b> : {quota_str}\n"
+        )
+        await msg_obj.reply_text(res, parse_mode="HTML")
+    else:
+        await msg_obj.reply_text(f"❌ Erreur lors de la création : {msg}")
+    return ConversationHandler.END
 
 async def v_cancel(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await upd.message.reply_text("Création annulée.")
@@ -560,12 +592,17 @@ def main():
             W_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_user)],
             W_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_pass)],
             W_DUR:  [MessageHandler(filters.TEXT & ~filters.COMMAND, v_dur)],
-            W_LIM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, v_lim)],
+            W_LIM:  [
+                CallbackQueryHandler(v_lim_unit, pattern="^lim_(mo|go|inf)$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, v_lim),
+            ],
         },
         fallbacks=[CommandHandler("cancel", v_cancel)],
+        per_message=False,
     )
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(vpn_cb, pattern="^vpn_"))
+
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))
     app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^r_"))
