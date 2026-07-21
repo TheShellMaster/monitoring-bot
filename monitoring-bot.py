@@ -4,7 +4,8 @@ from pathlib import Path
 
 import psutil
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
+import vpn_manager
 
 BASE_DIR = Path(__file__).parent.resolve()
 CHAT_ID_FILE = BASE_DIR / ".bot_chat_ids.json"
@@ -259,6 +260,125 @@ async def help(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "\U0001f514 Seuils d'alerte: CPU>80%, RAM>85%, Disque>85%"
     )
 
+# --- VPN CRM LOGIC ---
+W_USER, W_PASS, W_DUR, W_LIM = range(4)
+
+async def vpn_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    vpn_manager.init_db()
+    st = vpn_manager.check_zivpn_status()
+    st_text = "🟢 ALLUMÉ" if st else "🔴 ÉTEINT"
+    st_btn = "🔴 Stopper ZiVPN" if st else "🟢 Lancer ZiVPN"
+    st_cb = "vpn_stop" if st else "vpn_start"
+
+    kb = [
+        [InlineKeyboardButton("➕ Nouveau Compte", callback_data="vpn_new")],
+        [InlineKeyboardButton("📋 Liste des Comptes", callback_data="vpn_list")],
+        [InlineKeyboardButton("🗑 Supprimer un Compte", callback_data="vpn_del_menu")],
+        [InlineKeyboardButton(st_btn, callback_data=st_cb)]
+    ]
+    txt = f"🛡️ <b>Gestionnaire VPN (ZiVPN)</b>\nÉtat du serveur : {st_text}\n\nQue veux-tu faire ?"
+    if upd.message:
+        await upd.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    else:
+        await upd.callback_query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def vpn_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    d = q.data
+
+    if d == "vpn_start" or d == "vpn_stop":
+        act = "start" if d == "vpn_start" else "stop"
+        ok, msg = vpn_manager.zivpn_action(act)
+        await q.message.reply_text(f"Action : {msg}")
+        await vpn_menu(upd, ctx)
+        return ConversationHandler.END
+
+    if d == "vpn_list":
+        rows = vpn_manager.list_users()
+        if not rows:
+            await q.message.reply_text("Aucun compte VPN actif.")
+        else:
+            out = "📋 <b>Comptes VPN</b>\n\n"
+            for u, p, exp, lim in rows:
+                out += f"👤 <b>{u}</b> (Pass: {p})\n⏳ Expire : {exp}\n📊 Limite : {lim} Go\n---\n"
+            await q.message.reply_text(out, parse_mode="HTML")
+        return ConversationHandler.END
+
+    if d == "vpn_del_menu":
+        rows = vpn_manager.list_users()
+        if not rows:
+            await q.message.reply_text("Aucun compte à supprimer.")
+            return ConversationHandler.END
+        kb = [[InlineKeyboardButton(f"❌ {r[0]}", callback_data=f"vpndel_{r[0]}")] for r in rows]
+        await q.message.reply_text("Quel compte veux-tu supprimer ?", reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    if d.startswith("vpndel_"):
+        user = d.split("_", 1)[1]
+        ok, msg = vpn_manager.del_user(user)
+        await q.message.reply_text(f"Suppression de {user} : {msg}")
+        return ConversationHandler.END
+
+    if d == "vpn_new":
+        await q.message.reply_text("👤 Entrez le **nom d'utilisateur** pour le nouveau compte VPN :", parse_mode="Markdown")
+        return W_USER
+
+async def v_user(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data['v_user'] = upd.message.text.strip()
+    await upd.message.reply_text("🔑 Entrez le **mot de passe** :", parse_mode="Markdown")
+    return W_PASS
+
+async def v_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data['v_pass'] = upd.message.text.strip()
+    await upd.message.reply_text("⏳ Entrez la **durée en jours** (ex: 30) :", parse_mode="Markdown")
+    return W_DUR
+
+async def v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    try:
+        ctx.user_data['v_dur'] = int(upd.message.text.strip())
+        await upd.message.reply_text("📊 Entrez la **limite en Go** (ex: 50, ou 0 pour illimité) :", parse_mode="Markdown")
+        return W_LIM
+    except:
+        await upd.message.reply_text("Veuillez entrer un nombre entier valide pour la durée.")
+        return W_DUR
+
+async def v_lim(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    try:
+        ctx.user_data['v_lim'] = float(upd.message.text.strip())
+        u, p, d, l = ctx.user_data['v_user'], ctx.user_data['v_pass'], ctx.user_data['v_dur'], ctx.user_data['v_lim']
+        await upd.message.reply_text("⏳ Création du compte en cours sur le serveur...")
+        ok, msg = vpn_manager.add_user(u, p, d, l)
+        
+        if ok:
+            import urllib.request
+            ip = "127.0.0.1"
+            try: ip = urllib.request.urlopen("https://api.ipify.org").read().decode('utf8')
+            except: pass
+
+            res = (
+                f"🟢 <b>Compte VPN Créé avec Succès !</b>\n\n"
+                f"🌐 <b>Host / IP</b> : <code>{ip}</code>\n"
+                f"🔌 <b>Port UDP</b> : <code>443</code>\n"
+                f"👤 <b>User</b> : <code>{u}</code>\n"
+                f"🔑 <b>Pass</b> : <code>{p}</code>\n"
+                f"⏳ <b>Durée</b> : {d} jours\n"
+                f"📊 <b>Quota</b> : {l} Go\n"
+            )
+            await upd.message.reply_text(res, parse_mode="HTML")
+        else:
+            await upd.message.reply_text(f"❌ Erreur lors de la création : {msg}")
+        return ConversationHandler.END
+    except:
+        await upd.message.reply_text("Veuillez entrer un nombre valide pour la limite.")
+        return W_LIM
+
+async def v_cancel(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await upd.message.reply_text("Création annulée.")
+    return ConversationHandler.END
+
+# --- END VPN CRM ---
+
 async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
     if not chat_ids:
         return
@@ -410,6 +530,7 @@ async def post_init(app: Application):
         BotCommand("disk", "Disque et I/O"),
         BotCommand("gpu", "GPU NVIDIA"),
         BotCommand("network", "Stats reseau"),
+        BotCommand("vpn", "Gestion comptes ZiVPN"),
         BotCommand("help", "Aide"),
     ]
     await app.bot.set_my_commands(cmds)
@@ -431,6 +552,21 @@ def main():
     app.add_handler(CommandHandler("gpu", gpu))
     app.add_handler(CommandHandler("network", network))
     app.add_handler(CommandHandler("help", help))
+    app.add_handler(CommandHandler("vpn", vpn_menu))
+
+    conv_handler = ConversationHandler(
+        entry_points=[CallbackQueryHandler(vpn_cb, pattern="^vpn_new$")],
+        states={
+            W_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_user)],
+            W_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_pass)],
+            W_DUR:  [MessageHandler(filters.TEXT & ~filters.COMMAND, v_dur)],
+            W_LIM:  [MessageHandler(filters.TEXT & ~filters.COMMAND, v_lim)],
+        },
+        fallbacks=[CommandHandler("cancel", v_cancel)],
+    )
+    app.add_handler(conv_handler)
+    app.add_handler(CallbackQueryHandler(vpn_cb, pattern="^vpn_"))
+
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))
     app.add_handler(CallbackQueryHandler(refresh_callback, pattern="^r_"))
     app.job_queue.run_repeating(alert_job, interval=60, first=30)
