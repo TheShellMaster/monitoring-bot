@@ -2,9 +2,8 @@
 """
 SSH Payload Proxy - Port 2053 (HTTP Injection) + Port 8443 (SSL Passthrough)
 
-Gère deux types de payloads :
-  - CONNECT  : Lit tous les headers, répond HTTP/1.0 200, puis tunnel SSH
-  - GET/POST : Lit tous les headers, les ignore silencieusement, puis tunnel SSH
+Gère intelligemment tous les types de payloads (CONNECT, GET, POST, etc.)
+sans bloquer ni corrompre le protocole SSH sous-jacent.
 """
 import asyncio
 import logging
@@ -19,7 +18,6 @@ HTTP_PROXY_PORT = int(os.getenv("SSH_HTTP_PORT", 2053))   # Port HTTP Injection
 SSL_PROXY_PORT  = int(os.getenv("SSH_SSL_PORT",  8443))   # Port SSL Passthrough
 
 HTTP_200 = b"HTTP/1.0 200 Connection established\r\n\r\n"
-# Méthodes HTTP reconnues comme payload (à consommer avant le tunnel)
 HTTP_METHODS = (b"CONNECT", b"GET", b"POST", b"HEAD", b"PUT", b"DELETE", b"OPTIONS")
 
 
@@ -43,100 +41,104 @@ async def _pipe(src_reader, dst_writer):
 
 async def _consume_http_payload(reader):
     """
-    Lit et consomme TOUT le payload HTTP (peut contenir plusieurs blocs CONNECT/GET).
-    Retourne (is_connect, leftover_bytes)
+    Analise le premier paquet envoyé par le client.
+    Si c'est du HTTP :
+      - Identifie si c'est une méthode CONNECT (nécessite une réponse HTTP 200).
+      - Recherche le début de la bannière SSH ("SSH-") dans le paquet.
+      - Extrait et retourne la partie SSH (leftover), en jetant le payload HTTP.
+    Si ce n'est pas du HTTP :
+      - Laisse tout passer intact pour le serveur SSH.
     """
     is_connect = False
-    buf = b""
     try:
-        # Timeout court : si dans 8s le payload n'est pas terminé, on passe
-        buf = await asyncio.wait_for(reader.read(4096), timeout=8)
+        # Lecture du premier paquet (timeout de 5 secondes pour éviter de bloquer)
+        buf = await asyncio.wait_for(reader.read(4096), timeout=5)
         if not buf:
-            return is_connect, buf
+            return False, b""
 
-        # Détecter le type de méthode pour savoir si on doit répondre HTTP 200
-        if any(buf.startswith(m) for m in HTTP_METHODS):
-            is_connect = True
+        # Récupération du premier mot pour tester si c'est du HTTP
+        parts = buf.split(None, 1)
+        first_word = parts[0] if parts else b""
 
-        # Consommer les blocks HTTP complets (\r\n\r\n)
-        # Les payloads personnalisés (HA Tunnel, HTTP Injector) ne sont pas toujours 
-        # du HTTP valide (ex: manque le \r\n\r\n final).
-        # La façon la plus robuste est de chercher le début du handshake SSH ("SSH-")
-        while b"SSH-" not in buf:
-            try:
-                chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
-                if not chunk:
-                    break
-                buf += chunk
-            except asyncio.TimeoutError:
-                break
-        
-        if b"SSH-" in buf:
-            idx = buf.index(b"SSH-")
-            # Tout ce qui est avant "SSH-" est le payload HTTP (on le jette)
-            # Tout ce qui est après (y compris "SSH-") est le vrai trafic
-            leftover = buf[idx:]
+        if first_word in HTTP_METHODS:
+            log.info(f"[HTTP Proxy] Payload détecté avec la méthode : {first_word.decode('utf-8', errors='ignore')}")
+            
+            # C'est un tunnel CONNECT si la méthode est CONNECT ou s'il y a du CONNECT dans le payload
+            if first_word == b"CONNECT" or b"CONNECT" in buf:
+                is_connect = True
+
+            # Recherche de la bannière SSH
+            if b"SSH-" in buf:
+                idx = buf.index(b"SSH-")
+                leftover = buf[idx:]
+                log.info(f"[HTTP Proxy] Bannière SSH trouvée dans le premier paquet. Transmission immédiate.")
+            else:
+                leftover = b""
+                log.info(f"[HTTP Proxy] En attente de la bannière SSH après réponse HTTP.")
+
+            return is_connect, leftover
         else:
-            # Si on ne trouve pas SSH-, on recrache tout pour laisser OpenSSH gérer l'erreur
-            leftover = buf
+            # Ce n'est pas du HTTP (connexion SSH directe sans payload)
+            return False, buf
 
-        log.debug(f"Payload consommé. is_connect={is_connect}. Reste {len(leftover)} octets pour SSH.")
-    except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
-        log.debug("Fin ou timeout lors de la lecture du payload HTTP")
-        leftover = buf
-
-    return is_connect, leftover
+    except Exception as e:
+        log.warning(f"[HTTP Proxy] Erreur ou timeout lors de l'analyse du payload : {e}")
+        return False, b""
 
 
 async def handle_client(reader, writer, mode="http"):
     """
     Gère une connexion cliente entrante.
-    mode='http' : lit et consomme le payload HTTP avant de tunneler
-    mode='ssl'  : tunnel direct (TLS passthrough côté client)
+    mode='http' : filtre le payload HTTP avant de rediriger vers OpenSSH
+    mode='ssl'  : tunnel direct (SSL Passthrough)
     """
     peer = writer.get_extra_info("peername")
-    log.info(f"[{mode.upper()}] Connexion de {peer}")
+    log.info(f"[{mode.upper()}] Connexion reçue de {peer}")
 
     leftover = b""
     if mode == "http":
         is_connect, leftover = await _consume_http_payload(reader)
 
-        # Si payload CONNECT → répondre 200 pour débloquer le client SSH Custom
+        # Si c'est un payload de type CONNECT, on doit renvoyer la réponse de connexion établie
         if is_connect:
             try:
                 writer.write(HTTP_200)
                 await writer.drain()
-                log.debug(f"Réponse HTTP 200 envoyée à {peer}")
-            except Exception:
+                log.info(f"[{mode.upper()}] Réponse HTTP 200 renvoyée à {peer}")
+            except Exception as e:
+                log.error(f"[{mode.upper()}] Impossible de renvoyer le HTTP 200 à {peer} : {e}")
                 writer.close()
                 return
 
-    # Connexion vers OpenSSH local
+    # Connexion vers le serveur OpenSSH local
     try:
         ssh_reader, ssh_writer = await asyncio.open_connection(SSH_HOST, SSH_PORT)
-    except ConnectionRefusedError:
-        log.error(f"Impossible de se connecter à OpenSSH sur {SSH_HOST}:{SSH_PORT}")
+    except Exception as e:
+        log.error(f"[{mode.upper()}] Impossible de joindre le serveur SSH local ({SSH_HOST}:{SSH_PORT}) : {e}")
         try:
             writer.close()
         except Exception:
             pass
         return
 
-    # Si on a "trop" lu (début de la connexion SSH collé au header HTTP), on l'envoie à SSH
+    # Si on a extrait des octets SSH du premier paquet, on les envoie à SSH
     if leftover:
         try:
             ssh_writer.write(leftover)
             await ssh_writer.drain()
-        except Exception:
-            pass
+        except Exception as e:
+            log.error(f"[{mode.upper()}] Erreur lors de l'envoi du leftover SSH : {e}")
+            writer.close()
+            ssh_writer.close()
+            return
 
-    # Tunnel bidirectionnel
+    # Lancement du tunnel bidirectionnel
     await asyncio.gather(
         _pipe(reader, ssh_writer),
         _pipe(ssh_reader, writer),
         return_exceptions=True,
     )
-    log.info(f"[{mode.upper()}] Connexion terminée depuis {peer}")
+    log.info(f"[{mode.upper()}] Connexion fermée pour {peer}")
 
 
 async def main():
