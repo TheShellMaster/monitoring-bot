@@ -32,6 +32,10 @@ def init_db():
             expires_at TIMESTAMP
         )
     ''')
+    try:
+        c.execute("ALTER TABLE vpn_users ADD COLUMN locked INTEGER DEFAULT 0")
+    except sqlite3.OperationalError:
+        pass
     conn.commit()
     conn.close()
 
@@ -103,7 +107,7 @@ def add_user(username, password, expires_at_str):
 def del_user(username):
     try:
         if not MOCK_MODE:
-            subprocess.run(["sudo", "userdel", "-r", username], check=True, timeout=5)
+            subprocess.run(["sudo", "userdel", "-r", username], check=False, timeout=5)
             subprocess.run(["sudo", "pkill", "-u", username], stderr=subprocess.DEVNULL)
             
         _update_zivpn_config(username, "del")
@@ -121,9 +125,14 @@ def del_user(username):
 def lock_user(username):
     try:
         if not MOCK_MODE:
-            subprocess.run(["sudo", "usermod", "-L", username], check=True, timeout=5)
+            subprocess.run(["sudo", "usermod", "-L", username], check=False, timeout=5)
             subprocess.run(["sudo", "pkill", "-u", username], stderr=subprocess.DEVNULL)
         _update_zivpn_config(username, "del")
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE vpn_users SET locked=1 WHERE username=?", (username,))
+        conn.commit()
+        conn.close()
         return True
     except Exception as e:
         log.error(f"Error locking user: {e}")
@@ -134,6 +143,11 @@ def unlock_user(username):
         if not MOCK_MODE:
             subprocess.run(["sudo", "usermod", "-U", username], check=True, timeout=5)
         _update_zivpn_config(username, "add")
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("UPDATE vpn_users SET locked=0 WHERE username=?", (username,))
+        conn.commit()
+        conn.close()
         return True
     except Exception as e:
         log.error(f"Error unlocking user: {e}")
@@ -212,7 +226,7 @@ def get_expired_users():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     now = _now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('SELECT username FROM vpn_users WHERE expires_at <= ?', (now,))
+    c.execute('SELECT username FROM vpn_users WHERE expires_at <= ? AND locked=0', (now,))
     rows = c.fetchall()
     conn.close()
     return [r[0] for r in rows]

@@ -1,4 +1,4 @@
-import os, json, logging, time, platform, subprocess, re
+import os, json, logging, time, platform, subprocess, re, sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -434,6 +434,8 @@ async def v_cancel(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # États SSH : range(10, 15) pour ne pas chevaucher les états VPN (0-4)
 SSH_W_USER, SSH_W_PASS, SSH_W_DUR = range(10, 13)
 SSH_W_EDIT_PASS, SSH_W_EDIT_EXP  = range(13, 15)
+SSH_W_CONN = 15
+SSH_W_DATA = 16
 
 async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ssh_manager.init_db()
@@ -487,11 +489,26 @@ async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if not row:
             await q.message.reply_text("Compte introuvable.")
             return ConversationHandler.END
+
+        conn = sqlite3.connect("ssh_accounts.db")
+        c = conn.cursor()
+        c.execute("SELECT max_conn, data_limit_mb, data_used_mb FROM ssh_users WHERE username=?", (user,))
+        extra = c.fetchone()
+        conn.close()
+
         u, p, exp = row
+        mc, dlm, dum = extra if extra else (0, 0, 0)
+        lims = ""
+        if mc > 0:
+            lims += f"🔗 Max connexions : {mc}\n"
+        if dlm > 0:
+            rem = max(0, dlm - dum)
+            lims += f"💾 Data : {dum:.1f}/{dlm} MB ({rem:.0f} MB restant)\n"
         out = (
             f"👤 <b>Compte SSH : {u}</b>\n"
             f"🔑 Pass : <code>{p}</code>\n"
             f"⏳ Expire : {exp}\n"
+            f"{lims}"
         )
         kb = [
             [InlineKeyboardButton("✏️ Changer Pass", callback_data=f"ssheditpass_{u}")],
@@ -552,33 +569,81 @@ async def ssh_v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     except ValueError:
         await upd.message.reply_text("Format invalide. Entrez la date au format `YYYY-MM-DD HH:MM`.")
         return SSH_W_DUR
+    ctx.user_data['ssh_dur'] = val
+    await upd.message.reply_text(
+        "🔗 **Limite de connexions simultanées** (optionnel)\n"
+        "Combien de connexions SSH max ? (ex: `2`, ou `0` pour illimité)",
+        parse_mode="Markdown"
+    )
+    return SSH_W_CONN
 
+async def ssh_v_conn(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    val = upd.message.text.strip()
+    try:
+        max_conn = int(val)
+        if max_conn < 0:
+            raise ValueError
+    except ValueError:
+        await upd.message.reply_text("Invalide. Entre un nombre entier (ex: `2`) ou `0` pour illimité.", parse_mode="Markdown")
+        return SSH_W_CONN
+    ctx.user_data['ssh_max_conn'] = max_conn
+    await upd.message.reply_text(
+        "💾 **Limite de données** (optionnel)\n"
+        "Combien de MB maximum ? (ex: `500`, ou `0` pour illimité)",
+        parse_mode="Markdown"
+    )
+    return SSH_W_DATA
+
+async def ssh_v_data(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    val = upd.message.text.strip()
+    try:
+        data_limit = int(val)
+        if data_limit < 0:
+            raise ValueError
+    except ValueError:
+        await upd.message.reply_text("Invalide. Entre un nombre en MB (ex: `500`) ou `0` pour illimité.", parse_mode="Markdown")
+        return SSH_W_DATA
+    ctx.user_data['ssh_data_limit'] = data_limit
+    return await _create_ssh_account(upd, ctx)
+
+async def _create_ssh_account(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     u = ctx.user_data['ssh_user']
     p = ctx.user_data['ssh_pass']
-    await upd.message.reply_text("⏳ Création du compte SSH en cours...")
-    ok, msg = ssh_manager.add_user(u, p, val)
+    d = ctx.user_data['ssh_dur']
+    mc = ctx.user_data.get('ssh_max_conn', 0)
+    dl = ctx.user_data.get('ssh_data_limit', 0)
+
+    msg_obj = upd.message or upd.callback_query.message
+    await msg_obj.reply_text("⏳ Création du compte SSH en cours...")
+    ok, msg = ssh_manager.add_user(u, p, d, max_conn=mc, data_limit_mb=dl)
 
     if ok:
         import urllib.request
         ip = "127.0.0.1"
         try: ip = urllib.request.urlopen("https://api.ipify.org").read().decode('utf8')
         except: pass
+        limits = ""
+        if mc > 0:
+            limits += f"🔗 Max connexions : {mc}\n"
+        if dl > 0:
+            limits += f"💾 Quota data : {dl} MB\n"
         res = (
             f"✅ <b>Compte SSH Créé !</b>\n\n"
             f"━━━━━━ CONNEXION ━━━━━━\n"
             f"🌐 <b>Host</b>   : <code>{ip}</code>\n"
             f"👤 <b>User</b>   : <code>{u}</code>\n"
             f"🔑 <b>Pass</b>   : <code>{p}</code>\n"
-            f"⏳ <b>Expire</b> : {val}\n\n"
-            f"━━━━━━━ PORTS ━━━━━━━\n"
+            f"⏳ <b>Expire</b> : {d}\n"
+            f"{limits}"
+            f"━━━━━━━ PORTS ─────────\n"
             f"📡 HTTP Injection : <code>2053</code>\n"
             f"🔒 SSL Payload    : <code>8443</code>\n\n"
-            f"━━━━ PAYLOAD EXEMPLE ━━━━\n"
+            f"━━━━━━ PAYLOAD EXEMPLE ─────\n"
             f"<code>GET / HTTP/1.1[crlf]Host: free.orange.cm[crlf]Connection: Upgrade[crlf][crlf]</code>"
         )
-        await upd.message.reply_text(res, parse_mode="HTML")
+        await msg_obj.reply_text(res, parse_mode="HTML")
     else:
-        await upd.message.reply_text(f"❌ Erreur : {msg}")
+        await msg_obj.reply_text(f"❌ Erreur : {msg}")
     return ConversationHandler.END
 
 async def ssh_edit_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -623,6 +688,34 @@ async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
                     )
     except Exception as e:
         log.error(f"Erreur SSH expirés: {e}")
+
+    # Vérification quota data SSH
+    try:
+        conn = sqlite3.connect("ssh_accounts.db")
+        c = conn.cursor()
+        c.execute("SELECT username, data_limit_mb, data_used_mb FROM ssh_users WHERE data_limit_mb > 0")
+        for row in c.fetchall():
+            uname, dlim, dused = row
+            ssh_manager.update_data_used(uname)
+        conn.close()
+        # Re-request with updated values
+        conn = sqlite3.connect("ssh_accounts.db")
+        c = conn.cursor()
+        c.execute("SELECT username, data_limit_mb, data_used_mb FROM ssh_users WHERE data_limit_mb > 0")
+        for row in c.fetchall():
+            uname, dlim, dused = row
+            if dused >= dlim:
+                ssh_manager.lock_user(uname)
+                if chat_ids:
+                    for cid in list(chat_ids):
+                        await ctx.bot.send_message(
+                            chat_id=cid,
+                            text=f"⚠️ Le compte SSH <b>{uname}</b> a atteint son quota data ({dused:.1f}/{dlim} MB) et a été verrouillé.",
+                            parse_mode="HTML"
+                        )
+        conn.close()
+    except Exception as e:
+        log.error(f"Erreur SSH data quota: {e}")
 
     if not chat_ids:
         return
@@ -830,6 +923,8 @@ def main():
             SSH_W_USER:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_user)],
             SSH_W_PASS:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_pass)],
             SSH_W_DUR:      [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_dur)],
+            SSH_W_CONN:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_conn)],
+            SSH_W_DATA:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_data)],
             SSH_W_EDIT_PASS:[MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_pass)],
             SSH_W_EDIT_EXP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_exp)],
         },
