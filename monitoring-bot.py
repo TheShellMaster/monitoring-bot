@@ -247,19 +247,28 @@ async def network(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def help(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     reg(upd.effective_chat.id)
     await upd.message.reply_text(
-        "\U0001f916 Commandes disponibles\n"
-        f"{'='*28}\n"
-        "\U0001f4ca /status - Resume complet\n"
-        "\U0001f5a5 /system - Infos systeme\n"
-        "\U0001f5a5 /cpu    - Utilisation CPU\n"
-        "\U0001f9e0 /ram    - RAM et Swap\n"
-        "\U0001f4be /disk   - Disque et I/O\n"
-        "\U0001f3ae /gpu    - GPU NVIDIA\n"
-        "\U0001f4e1 /network- Stats reseau\n"
-        "/help   - Cette aide\n"
-        "\n"
-        "\U0001f514 Seuils d'alerte: CPU>80%, RAM>85%, Disque>85%"
-    )
+        "\U0001f916 <b>Commandes disponibles</b>\n"
+        f"{'='*28}\n\n"
+        "\U0001f9ed <b>Surveillance Serveur</b>\n"
+        "\U0001f4ca /status  - Tableau de bord complet\n"
+        "\U0001f5a5 /system  - OS, kernel, uptime, users\n"
+        "\U0001f5a5 /cpu     - Utilisation CPU, charge, frequence\n"
+        "\U0001f9e0 /ram     - RAM et Swap (total, utilise, libre)\n"
+        "\U0001f4be /disk    - Disque et E/S\n"
+        "\U0001f3ae /gpu     - GPU NVIDIA (usage, VRAM, temperature)\n"
+        "\U0001f4e1 /network - Stats reseau par interface + vitesse\n\n"
+        "\U0001f6e1 <b>Gestion des Acces</b>\n"
+        "\U0001f5e1 /vpn     - Gestion VPN (ZiVPN UDP port 443)\n"
+        "\U0001f511 /ssh     - Gestion SSH Payload (ports 2053/8443)\n"
+        "   \u2192 Creer/supprimer/modifier comptes\n"
+        "   \u2192 Limiter connexions simultanees\n"
+        "   \u2192 Quota data (MB)\n\n"
+        "\U0001f514 <b>Alertes automatiques</b>\n"
+        "\u2022 CPU > 80%  |  RAM > 85%  |  Disque > 85%\n"
+        "\u2022 Comptes expires verrouilles + notifies\n"
+        "\u2022 Quota data SSH verifie toutes les 60s\n\n"
+        "\U0001f539 /help - Cette aide"
+    , parse_mode="HTML")
 
 # --- VPN CRM LOGIC ---
 # --- VPN CRM LOGIC ---
