@@ -437,16 +437,22 @@ SSH_W_EDIT_PASS, SSH_W_EDIT_EXP  = range(13, 15)
 
 async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ssh_manager.init_db()
+    st = ssh_manager.check_proxy_status()
+    st_text = "🟢 ALLUMÉ" if st else "🔴 ÉTEINT"
+    st_btn  = "🔴 Stopper le Proxy SSH" if st else "🟢 Lancer le Proxy SSH"
+    st_cb   = "ssh_stop" if st else "ssh_start"
     kb = [
         [InlineKeyboardButton("➕ Nouveau Compte SSH", callback_data="ssh_new")],
         [InlineKeyboardButton("📋 Liste des Comptes", callback_data="ssh_list")],
         [InlineKeyboardButton("🗑 Supprimer un Compte", callback_data="ssh_del_menu")],
+        [InlineKeyboardButton(st_btn, callback_data=st_cb)],
     ]
     txt = (
-        "🔐 <b>Gestionnaire SSH (TCP Payload)</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "📡 HTTP Injection : Port <code>2053</code>\n"
-        "🔒 SSL Passthrough : Port <code>8443</code>\n\n"
+        f"🔐 <b>Gestionnaire SSH (TCP Payload)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"📡 HTTP Injection : Port <code>2053</code>\n"
+        f"🔒 SSL Passthrough : Port <code>8443</code>\n"
+        f"Proxy : {st_text}\n\n"
         "Que veux-tu faire ?"
     )
     if upd.message:
@@ -459,6 +465,13 @@ async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     d = q.data
 
+    # ── ON / OFF du proxy ──
+    if d in ("ssh_start", "ssh_stop"):
+        action = "start" if d == "ssh_start" else "stop"
+        ok, msg = ssh_manager.proxy_action(action)
+        await q.message.reply_text(f"Proxy SSH : {msg}")
+        await ssh_menu(upd, ctx)
+        return ConversationHandler.END
     if d == "ssh_list":
         rows = ssh_manager.list_users()
         if not rows:

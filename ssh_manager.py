@@ -175,3 +175,31 @@ def get_expired_users():
     rows = c.fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+
+def check_proxy_status():
+    """Retourne True si ssh-proxy.service est actif."""
+    if MOCK_MODE:
+        return True
+    try:
+        r = subprocess.run(
+            ["sudo", "-n", "systemctl", "is-active", "ssh-proxy.service"],
+            capture_output=True, text=True, timeout=5
+        )
+        return r.stdout.strip() == "active"
+    except Exception:
+        return False
+
+
+def proxy_action(action):
+    """Démarre ou stoppe ssh-proxy.service. action = 'start' | 'stop' | 'restart'"""
+    if MOCK_MODE:
+        return True, f"ssh-proxy.service {action} (SIMULÉ)"
+    try:
+        subprocess.run(
+            ["sudo", "-n", "systemctl", action, "ssh-proxy.service"],
+            check=True, timeout=5
+        )
+        return True, f"Service SSH proxy {action}."
+    except Exception as e:
+        return False, str(e)
