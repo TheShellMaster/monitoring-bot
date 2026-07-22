@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """
-SSH Payload Proxy - Port 80 (HTTP Injection) + Port 8443 (SSL Passthrough)
-Lit le payload HTTP initial du client, l'ignore, puis tunnel vers OpenSSH (port 22).
+SSH Payload Proxy - Port 2053 (HTTP Injection) + Port 8443 (SSL Passthrough)
+
+Gère deux types de payloads :
+  - CONNECT  : Lit tous les headers, répond HTTP/1.0 200, puis tunnel SSH
+  - GET/POST : Lit tous les headers, les ignore silencieusement, puis tunnel SSH
 """
 import asyncio
 import logging
@@ -14,6 +17,10 @@ SSH_HOST = "127.0.0.1"
 SSH_PORT = 22
 HTTP_PROXY_PORT = int(os.getenv("SSH_HTTP_PORT", 2053))   # Port HTTP Injection
 SSL_PROXY_PORT  = int(os.getenv("SSH_SSL_PORT",  8443))   # Port SSL Passthrough
+
+HTTP_200 = b"HTTP/1.0 200 Connection established\r\n\r\n"
+# Méthodes HTTP reconnues comme payload (à consommer avant le tunnel)
+HTTP_METHODS = (b"CONNECT", b"GET", b"POST", b"HEAD", b"PUT", b"DELETE", b"OPTIONS")
 
 
 async def _pipe(src_reader, dst_writer):
@@ -34,30 +41,79 @@ async def _pipe(src_reader, dst_writer):
             pass
 
 
+async def _consume_http_payload(reader):
+    """
+    Lit et consomme TOUT le payload HTTP (peut contenir plusieurs blocs CONNECT/GET).
+    Retourne True si le payload débutait par CONNECT (proxy tunnel),
+    False si c'était un GET classique ou rien.
+    """
+    is_connect = False
+    try:
+        # Timeout court : si dans 8s le payload n'est pas terminé, on passe
+        first_chunk = await asyncio.wait_for(reader.read(4096), timeout=8)
+        if not first_chunk:
+            return is_connect
+
+        # Détecter le type de méthode
+        if first_chunk.startswith(b"CONNECT"):
+            is_connect = True
+
+        # Consommer les blocks HTTP complets (\r\n\r\n)
+        # On accumule et on cherche la fin de chaque bloc headers
+        buf = first_chunk
+        # Consommer tant qu'on a des headers HTTP complets
+        while b"\r\n\r\n" in buf:
+            idx = buf.index(b"\r\n\r\n") + 4
+            remaining = buf[idx:]
+            buf = remaining
+            # Si ce qui reste commence encore par une méthode HTTP → autre bloc payload
+            if not any(buf.startswith(m) for m in HTTP_METHODS):
+                break
+            # Lire la suite du prochain bloc
+            try:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
+                buf += chunk
+            except asyncio.TimeoutError:
+                break
+
+        log.debug(f"Payload HTTP consommé (is_connect={is_connect})")
+    except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
+        log.debug("Fin ou timeout lors de la lecture du payload HTTP")
+
+    return is_connect
+
+
 async def handle_client(reader, writer, mode="http"):
     """
     Gère une connexion cliente entrante.
-    mode='http' : lit et ignore le payload HTTP avant de tunneler
-    mode='ssl'  : tunnel direct (TLS passthrough)
+    mode='http' : lit et consomme le payload HTTP avant de tunneler
+    mode='ssl'  : tunnel direct (TLS passthrough côté client)
     """
     peer = writer.get_extra_info("peername")
     log.info(f"[{mode.upper()}] Connexion de {peer}")
 
     if mode == "http":
-        try:
-            # Lire le payload HTTP jusqu'à la fin des headers (\r\n\r\n)
-            payload = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=8)
-            log.debug(f"Payload HTTP reçu de {peer}: {payload[:80]!r}")
-        except (asyncio.TimeoutError, asyncio.IncompleteReadError):
-            # Connexion sans payload (directe) ou timeout → on tente quand même
-            log.debug(f"Pas de payload HTTP complet de {peer}, tunnel direct.")
+        is_connect = await _consume_http_payload(reader)
+
+        # Si payload CONNECT → répondre 200 pour débloquer le client SSH Custom
+        if is_connect:
+            try:
+                writer.write(HTTP_200)
+                await writer.drain()
+                log.debug(f"Réponse HTTP 200 envoyée à {peer}")
+            except Exception:
+                writer.close()
+                return
 
     # Connexion vers OpenSSH local
     try:
         ssh_reader, ssh_writer = await asyncio.open_connection(SSH_HOST, SSH_PORT)
     except ConnectionRefusedError:
         log.error(f"Impossible de se connecter à OpenSSH sur {SSH_HOST}:{SSH_PORT}")
-        writer.close()
+        try:
+            writer.close()
+        except Exception:
+            pass
         return
 
     # Tunnel bidirectionnel
