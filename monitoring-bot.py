@@ -6,6 +6,7 @@ import psutil
 from telegram import Update, BotCommand, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 import vpn_manager
+import ssh_manager
 
 BASE_DIR = Path(__file__).parent.resolve()
 CHAT_ID_FILE = BASE_DIR / ".bot_chat_ids.json"
@@ -427,6 +428,160 @@ async def v_cancel(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
 # --- END VPN CRM ---
 
+# ══════════════════════════════════════════════════════
+# ===              SSH CRM (/ssh)                    ===
+# ══════════════════════════════════════════════════════
+# États SSH : range(10, 15) pour ne pas chevaucher les états VPN (0-4)
+SSH_W_USER, SSH_W_PASS, SSH_W_DUR = range(10, 13)
+SSH_W_EDIT_PASS, SSH_W_EDIT_EXP  = range(13, 15)
+
+async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ssh_manager.init_db()
+    kb = [
+        [InlineKeyboardButton("➕ Nouveau Compte SSH", callback_data="ssh_new")],
+        [InlineKeyboardButton("📋 Liste des Comptes", callback_data="ssh_list")],
+        [InlineKeyboardButton("🗑 Supprimer un Compte", callback_data="ssh_del_menu")],
+    ]
+    txt = (
+        "🔐 <b>Gestionnaire SSH (TCP Payload)</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📡 HTTP Injection : Port <code>2053</code>\n"
+        "🔒 SSL Passthrough : Port <code>8443</code>\n\n"
+        "Que veux-tu faire ?"
+    )
+    if upd.message:
+        await upd.message.reply_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+    else:
+        await upd.callback_query.edit_message_text(txt, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+
+async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    d = q.data
+
+    if d == "ssh_list":
+        rows = ssh_manager.list_users()
+        if not rows:
+            await q.message.reply_text("Aucun compte SSH actif.")
+        else:
+            kb = [[InlineKeyboardButton(f"👤 {r[0]} (Exp: {r[2]})", callback_data=f"sshinfo_{r[0]}")] for r in rows]
+            await q.message.reply_text("📋 <b>Sélectionnez un compte :</b>", reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+        return ConversationHandler.END
+
+    if d.startswith("sshinfo_"):
+        user = d.split("_", 1)[1]
+        row = ssh_manager.get_user(user)
+        if not row:
+            await q.message.reply_text("Compte introuvable.")
+            return ConversationHandler.END
+        u, p, exp = row
+        out = (
+            f"👤 <b>Compte SSH : {u}</b>\n"
+            f"🔑 Pass : <code>{p}</code>\n"
+            f"⏳ Expire : {exp}\n"
+        )
+        kb = [
+            [InlineKeyboardButton("✏️ Changer Pass", callback_data=f"ssheditpass_{u}")],
+            [InlineKeyboardButton("⏳ Changer Expiration", callback_data=f"ssheditexp_{u}")],
+            [InlineKeyboardButton("❌ Supprimer", callback_data=f"sshdel_{u}")],
+        ]
+        await q.message.reply_text(out, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
+        return ConversationHandler.END
+
+    if d == "ssh_del_menu":
+        rows = ssh_manager.list_users()
+        if not rows:
+            await q.message.reply_text("Aucun compte SSH à supprimer.")
+            return ConversationHandler.END
+        kb = [[InlineKeyboardButton(f"❌ {r[0]}", callback_data=f"sshdel_{r[0]}")] for r in rows]
+        await q.message.reply_text("Quel compte SSH supprimer ?", reply_markup=InlineKeyboardMarkup(kb))
+        return ConversationHandler.END
+
+    if d.startswith("sshdel_"):
+        user = d.split("_", 1)[1]
+        ok, msg = ssh_manager.del_user(user)
+        await q.message.reply_text(f"Suppression SSH {user} : {msg}")
+        return ConversationHandler.END
+
+    if d == "ssh_new":
+        await q.message.reply_text("👤 Entrez le **nom d'utilisateur** SSH :", parse_mode="Markdown")
+        return SSH_W_USER
+
+    if d.startswith("ssheditpass_"):
+        ctx.user_data['ssh_edit_user'] = d.split("_", 1)[1]
+        await q.message.reply_text("🔑 Entrez le **nouveau mot de passe** :", parse_mode="Markdown")
+        return SSH_W_EDIT_PASS
+
+    if d.startswith("ssheditexp_"):
+        ctx.user_data['ssh_edit_user'] = d.split("_", 1)[1]
+        await q.message.reply_text(
+            "⏳ Entrez la **nouvelle date d'expiration** `YYYY-MM-DD HH:MM`\n"
+            "Exemple : `2026-08-20 14:30`", parse_mode="Markdown")
+        return SSH_W_EDIT_EXP
+
+async def ssh_v_user(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data['ssh_user'] = upd.message.text.strip()
+    await upd.message.reply_text("🔑 Entrez le **mot de passe** :", parse_mode="Markdown")
+    return SSH_W_PASS
+
+async def ssh_v_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    ctx.user_data['ssh_pass'] = upd.message.text.strip()
+    await upd.message.reply_text(
+        "⏳ Entrez la **date et heure d'expiration** `YYYY-MM-DD HH:MM`\n"
+        "Exemple : `2026-08-01 23:59`", parse_mode="Markdown")
+    return SSH_W_DUR
+
+async def ssh_v_dur(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    import datetime as _dt
+    val = upd.message.text.strip()
+    try:
+        _dt.datetime.strptime(val, "%Y-%m-%d %H:%M")
+    except ValueError:
+        await upd.message.reply_text("Format invalide. Entrez la date au format `YYYY-MM-DD HH:MM`.")
+        return SSH_W_DUR
+
+    u = ctx.user_data['ssh_user']
+    p = ctx.user_data['ssh_pass']
+    await upd.message.reply_text("⏳ Création du compte SSH en cours...")
+    ok, msg = ssh_manager.add_user(u, p, val)
+
+    if ok:
+        import urllib.request
+        ip = "127.0.0.1"
+        try: ip = urllib.request.urlopen("https://api.ipify.org").read().decode('utf8')
+        except: pass
+        res = (
+            f"✅ <b>Compte SSH Créé !</b>\n\n"
+            f"━━━━━━ CONNEXION ━━━━━━\n"
+            f"🌐 <b>Host</b>   : <code>{ip}</code>\n"
+            f"👤 <b>User</b>   : <code>{u}</code>\n"
+            f"🔑 <b>Pass</b>   : <code>{p}</code>\n"
+            f"⏳ <b>Expire</b> : {val}\n\n"
+            f"━━━━━━━ PORTS ━━━━━━━\n"
+            f"📡 HTTP Injection : <code>2053</code>\n"
+            f"🔒 SSL Payload    : <code>8443</code>\n\n"
+            f"━━━━ PAYLOAD EXEMPLE ━━━━\n"
+            f"<code>GET / HTTP/1.1[crlf]Host: free.orange.cm[crlf]Connection: Upgrade[crlf][crlf]</code>"
+        )
+        await upd.message.reply_text(res, parse_mode="HTML")
+    else:
+        await upd.message.reply_text(f"❌ Erreur : {msg}")
+    return ConversationHandler.END
+
+async def ssh_edit_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = ctx.user_data['ssh_edit_user']
+    ok, msg = ssh_manager.update_user_field(user, "password", upd.message.text.strip())
+    await upd.message.reply_text(f"Mot de passe SSH de {user} : {msg}")
+    return ConversationHandler.END
+
+async def ssh_edit_exp(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = ctx.user_data['ssh_edit_user']
+    ok, msg = ssh_manager.update_user_field(user, "expires_at", upd.message.text.strip())
+    await upd.message.reply_text(f"Expiration SSH de {user} : {msg}")
+    return ConversationHandler.END
+
+# --- END SSH CRM ---
+
 async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
     # Check for expired users with precise time
     try:
@@ -440,6 +595,21 @@ async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
                     await ctx.bot.send_message(chat_id=cid, text=f"⚠️ Le compte VPN <b>{eu}</b> a expiré et a été verrouillé automatiquement.", parse_mode="HTML")
     except Exception as e:
         log.error(f"Error handling expired users: {e}")
+
+    # Vérification comptes SSH expirés
+    try:
+        exp_ssh = ssh_manager.get_expired_users()
+        for eu in exp_ssh:
+            ssh_manager.lock_user(eu)
+            if chat_ids:
+                for cid in list(chat_ids):
+                    await ctx.bot.send_message(
+                        chat_id=cid,
+                        text=f"⚠️ Le compte SSH <b>{eu}</b> a expiré et a été verrouillé.",
+                        parse_mode="HTML"
+                    )
+    except Exception as e:
+        log.error(f"Erreur SSH expirés: {e}")
 
     if not chat_ids:
         return
@@ -592,6 +762,7 @@ async def post_init(app: Application):
         BotCommand("gpu", "GPU NVIDIA"),
         BotCommand("network", "Stats reseau"),
         BotCommand("vpn", "Gestion comptes ZiVPN"),
+        BotCommand("ssh", "Gestion comptes SSH (Payload)"),
         BotCommand("help", "Aide"),
     ]
     await app.bot.set_my_commands(cmds)
@@ -633,6 +804,27 @@ def main():
     )
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(vpn_cb, pattern="^vpn_|^vpninfo_"))
+
+    # ── SSH CRM handlers ──
+    app.add_handler(CommandHandler("ssh", ssh_menu))
+    ssh_conv = ConversationHandler(
+        entry_points=[
+            CallbackQueryHandler(ssh_cb, pattern="^ssh_new$"),
+            CallbackQueryHandler(ssh_cb, pattern="^ssheditpass_"),
+            CallbackQueryHandler(ssh_cb, pattern="^ssheditexp_"),
+        ],
+        states={
+            SSH_W_USER:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_user)],
+            SSH_W_PASS:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_pass)],
+            SSH_W_DUR:      [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_dur)],
+            SSH_W_EDIT_PASS:[MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_pass)],
+            SSH_W_EDIT_EXP: [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_exp)],
+        },
+        fallbacks=[CommandHandler("cancel", v_cancel)],
+        per_message=False,
+    )
+    app.add_handler(ssh_conv)
+    app.add_handler(CallbackQueryHandler(ssh_cb, pattern="^ssh_|^sshinfo_|^sshdel_"))
 
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))

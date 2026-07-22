@@ -6,7 +6,7 @@ set -e
 
 echo -e "\e[32m[1] Mise à jour du système et installation des dépendances...\e[0m"
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip curl wget openssl jq
+sudo apt-get install -y python3 python3-venv python3-pip curl wget openssl jq openssh-server
 
 echo -e "\e[32m[2] Détection de l'architecture...\e[0m"
 ARCH=$(uname -m)
@@ -75,8 +75,14 @@ sudo systemctl restart zivpn.service
 
 echo -e "\e[32m[6] Configuration des autorisations (Sudoers)...\e[0m"
 USER_CURRENT=$USER
-echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
+echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/bin/systemctl start ssh-proxy.service, /usr/bin/systemctl stop ssh-proxy.service, /usr/bin/systemctl restart ssh-proxy.service, /usr/bin/systemctl is-active ssh-proxy.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
 sudo chmod 440 /etc/sudoers.d/bot-vpn
+
+echo -e "\e[32m[6b] Configuration OpenSSH (sécurisation)...\e[0m"
+sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sudo systemctl enable ssh 2>/dev/null || sudo systemctl enable sshd 2>/dev/null || true
+sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null || true
 
 echo -e "\e[32m[7] Installation du Bot Telegram...\e[0m"
 if [ ! -d "venv" ]; then
@@ -119,9 +125,34 @@ sudo systemctl daemon-reload
 sudo systemctl enable monitoring-bot.service
 sudo systemctl restart monitoring-bot.service
 
+echo -e "\e[32m[8] Installation du Proxy SSH Payload (ports 2053 + 8443)...\e[0m"
+sudo tee /etc/systemd/system/ssh-proxy.service > /dev/null <<EOF
+[Unit]
+Description=SSH Payload Proxy (HTTP Injection port 2053 + SSL port 8443)
+After=network.target
+
+[Service]
+Type=simple
+User=$USER_CURRENT
+WorkingDirectory=$BOT_DIR
+ExecStart=$BOT_DIR/venv/bin/python3 $BOT_DIR/ssh_proxy.py
+Restart=always
+RestartSec=5
+EnvironmentFile=$BOT_DIR/.env_bot
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable ssh-proxy.service
+sudo systemctl restart ssh-proxy.service
+
 PUB_IP=$(curl -s https://api.ipify.org)
 
-echo -e "\e[32m=== Installation Terminée ===\e[0m"
-echo -e "IP Serveur : \e[33m$PUB_IP\e[0m"
-echo -e "Port ZiVPN : \e[33m443 UDP\e[0m"
-echo -e "Le Bot est en cours d'exécution. Allez sur Telegram et tapez /vpn"
+echo -e "\e[32m=== ✅ Installation Terminée ! ===\e[0m"
+echo -e "IP Serveur          : \e[33m$PUB_IP\e[0m"
+echo -e "ZiVPN UDP           : \e[33m443\e[0m"
+echo -e "SSH HTTP Injection  : \e[33m2053\e[0m"
+echo -e "SSH SSL Passthrough : \e[33m8443\e[0m"
+echo -e "Allez sur Telegram et tapez /vpn ou /ssh"
