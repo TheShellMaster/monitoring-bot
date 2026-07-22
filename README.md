@@ -25,6 +25,14 @@ La commande `/vpn` ouvre un CRM interactif complet pour votre serveur VPN :
 - **Suppression/Verrouillage** : Un clic pour bannir un utilisateur et couper sa connexion (`pkill`).
 - **Synchronisation** : Mise à jour automatique de `/etc/zivpn/config.json`.
 
+### 🛡️ Gestionnaire SSH (Payload / HA Tunnel)
+La commande `/ssh` ouvre un CRM pour votre Proxy SSH Custom (HTTP Injection & SSL Passthrough) :
+- **Double Proxy Intégré** : Supporte HTTP Injection (Port `2053`) et SSL/SNI Passthrough (Port `8443`).
+- **Gestion des Comptes** : Création d'utilisateurs Linux sécurisés, sans accès bash (`/bin/false`).
+- **Parsing Ultra-Robuste** : Détecte directement le protocole `SSH-2.0` pour une compatibilité à 100% avec les payloads HA Tunnel Plus, HTTP Injector, etc.
+- **Expiration Automatique** : Suspension en temps réel des accès expirés.
+- **Bouton ON/OFF** : Démarrer ou stopper le service `ssh-proxy.service` depuis Telegram.
+
 ---
 
 ## 🚀 Installation "All-In-One" (Recommandé)
@@ -70,4 +78,4 @@ echo "TELEGRAM_BOT_TOKEN=votre_token_ici" > .env_bot
 | Bot Python | Windows, macOS, Linux |
 
 ---
-*Tags pour Google et GitHub SEO: Telegram Bot, Server Monitoring, ZiVPN Manager, UDP VPN, VPN CRM, SysAdmin, DevOps, Python, Botfather, psutil, Linux Server, Ubuntu VPN Setup.*
+*Tags pour Google et GitHub SEO: Telegram Bot, Server Monitoring, ZiVPN Manager, UDP VPN, VPN CRM, SysAdmin, DevOps, Python, Botfather, psutil, Linux Server, Ubuntu VPN Setup, HA Tunnel Plus, HTTP Injector, SSH Payload, SSH Proxy, SNI Spoofing, TCP Custom, Free Internet Payload.*
