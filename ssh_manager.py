@@ -58,24 +58,29 @@ def init_db():
 # ──────────────────────── CRUD ────────────────────────────
 
 def add_user(username, password, expires_at_str):
-    """Crée un compte Linux SSH avec date d'expiration précise."""
-    username = username.lower()  # Sécurité : Linux préfère les minuscules
+    """Crée un compte Linux SSH avec date d'expiration gérée par le bot (pas par chage)."""
+    username = username.lower()  # Linux préfère les minuscules
     try:
         expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M")
     except ValueError:
         return False, "Format de date invalide. Utiliser YYYY-MM-DD HH:MM"
 
-    exp_date = expires_at.strftime("%Y-%m-%d")
     try:
+        # Créer le compte Linux SANS répertoire home, SANS shell bash
         _run(["sudo", "useradd", "-M", "-s", "/bin/false", username])
 
+        # Définir le mot de passe
         if not MOCK_MODE:
             proc = subprocess.Popen(["sudo", "chpasswd"], stdin=subprocess.PIPE, text=True)
             proc.communicate(f"{username}:{password}", timeout=5)
-            if proc.returncode and proc.returncode != 0:
-                raise Exception("chpasswd a échoué")
 
-        _run(["sudo", "chage", "-E", exp_date, username])
+        # IMPORTANT : on ne met PAS de date d'expiration Linux (chage -E -1 = jamais)
+        # L'expiration est gérée uniquement par notre bot (DB ssh_accounts.db)
+        # Sinon chage -E 2026-07-22 expire au début du jour, pas à l'heure exacte !
+        _run(["sudo", "chage", "-E", "-1", username])
+
+        # Débloquer le compte au cas où
+        _run(["sudo", "usermod", "-U", username])
 
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -87,7 +92,7 @@ def add_user(username, password, expires_at_str):
         conn.close()
         return True, "Compte SSH créé avec succès."
     except Exception as e:
-        _run(["sudo", "userdel", "-r", username], stderr=subprocess.DEVNULL)
+        _run(["sudo", "userdel", "-f", username])
         return False, str(e)
 
 
@@ -147,8 +152,8 @@ def update_user_field(username, field, value):
 
         elif field == "expires_at":
             dt = datetime.strptime(value, "%Y-%m-%d %H:%M")
-            _run(["sudo", "chage", "-E", dt.strftime("%Y-%m-%d"), username])
-            # Si la nouvelle date est dans le futur → déverrouille le compte
+            # On ne touche pas chage, l'expiration est gérée par le bot
+            # Si la nouvelle date est dans le futur → déverrouiller le compte
             if dt.replace(tzinfo=TZ) > _now():
                 unlock_user(username)
             col = "expires_at"

@@ -78,9 +78,13 @@ USER_CURRENT=$USER
 echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/bin/systemctl start ssh-proxy.service, /usr/bin/systemctl stop ssh-proxy.service, /usr/bin/systemctl restart ssh-proxy.service, /usr/bin/systemctl is-active ssh-proxy.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
 sudo chmod 440 /etc/sudoers.d/bot-vpn
 
-echo -e "\e[32m[6b] Configuration OpenSSH (sécurisation)...\e[0m"
+echo -e "\e[32m[6b] Configuration OpenSSH (sécurisation + autorisation des mots de passe)...\e[0m"
 sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
 sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+# Sur les images cloud AWS/GCP/Azure, un fichier prioritaire peut désactiver les mots de passe - on le corrige
+for f in /etc/ssh/sshd_config.d/*.conf; do
+    [ -f "$f" ] && sudo sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' "$f"
+done
 sudo systemctl enable ssh 2>/dev/null || sudo systemctl enable sshd 2>/dev/null || true
 sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null || true
 
