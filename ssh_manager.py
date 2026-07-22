@@ -17,7 +17,7 @@ TZ = zoneinfo.ZoneInfo(os.getenv("TZ", "Africa/Douala"))
 
 # Mode mock : si useradd n'est pas disponible (dev local), simule les commandes
 import shutil
-MOCK_MODE = shutil.which("useradd") is None or os.geteuid() != 0
+MOCK_MODE = False # Bot utilise sudo, pas besoin d'être root directement
 
 
 def _now():
@@ -59,6 +59,7 @@ def init_db():
 
 def add_user(username, password, expires_at_str):
     """Crée un compte Linux SSH avec date d'expiration précise."""
+    username = username.lower()  # Sécurité : Linux préfère les minuscules
     try:
         expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M")
     except ValueError:
