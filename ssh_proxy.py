@@ -44,43 +44,48 @@ async def _pipe(src_reader, dst_writer):
 async def _consume_http_payload(reader):
     """
     Lit et consomme TOUT le payload HTTP (peut contenir plusieurs blocs CONNECT/GET).
-    Retourne True si le payload débutait par CONNECT (proxy tunnel),
-    False si c'était un GET classique ou rien.
+    Retourne (is_connect, leftover_bytes)
     """
     is_connect = False
+    buf = b""
     try:
         # Timeout court : si dans 8s le payload n'est pas terminé, on passe
-        first_chunk = await asyncio.wait_for(reader.read(4096), timeout=8)
-        if not first_chunk:
-            return is_connect
+        buf = await asyncio.wait_for(reader.read(4096), timeout=8)
+        if not buf:
+            return is_connect, buf
 
         # Détecter le type de méthode
-        if first_chunk.startswith(b"CONNECT"):
+        if buf.startswith(b"CONNECT"):
             is_connect = True
 
         # Consommer les blocks HTTP complets (\r\n\r\n)
-        # On accumule et on cherche la fin de chaque bloc headers
-        buf = first_chunk
-        # Consommer tant qu'on a des headers HTTP complets
-        while b"\r\n\r\n" in buf:
-            idx = buf.index(b"\r\n\r\n") + 4
-            remaining = buf[idx:]
-            buf = remaining
-            # Si ce qui reste commence encore par une méthode HTTP → autre bloc payload
-            if not any(buf.startswith(m) for m in HTTP_METHODS):
-                break
-            # Lire la suite du prochain bloc
-            try:
-                chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
-                buf += chunk
-            except asyncio.TimeoutError:
-                break
+        while True:
+            if b"\r\n\r\n" in buf:
+                idx = buf.index(b"\r\n\r\n") + 4
+                remaining = buf[idx:]
+                # Si ce qui reste commence encore par une méthode HTTP → autre bloc payload
+                if any(remaining.startswith(m) for m in HTTP_METHODS):
+                    buf = remaining
+                    continue
+                else:
+                    # Ce n'est plus du HTTP, c'est le début du vrai trafic SSH !
+                    buf = remaining
+                    break
+            else:
+                # Lire la suite du bloc HTTP incomplet
+                try:
+                    chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
+                    if not chunk:
+                        break
+                    buf += chunk
+                except asyncio.TimeoutError:
+                    break
 
-        log.debug(f"Payload HTTP consommé (is_connect={is_connect})")
+        log.debug(f"Payload HTTP consommé (is_connect={is_connect}), reste {len(buf)} octets SSH.")
     except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
         log.debug("Fin ou timeout lors de la lecture du payload HTTP")
 
-    return is_connect
+    return is_connect, buf
 
 
 async def handle_client(reader, writer, mode="http"):
@@ -92,8 +97,9 @@ async def handle_client(reader, writer, mode="http"):
     peer = writer.get_extra_info("peername")
     log.info(f"[{mode.upper()}] Connexion de {peer}")
 
+    leftover = b""
     if mode == "http":
-        is_connect = await _consume_http_payload(reader)
+        is_connect, leftover = await _consume_http_payload(reader)
 
         # Si payload CONNECT → répondre 200 pour débloquer le client SSH Custom
         if is_connect:
@@ -115,6 +121,14 @@ async def handle_client(reader, writer, mode="http"):
         except Exception:
             pass
         return
+
+    # Si on a "trop" lu (début de la connexion SSH collé au header HTTP), on l'envoie à SSH
+    if leftover:
+        try:
+            ssh_writer.write(leftover)
+            await ssh_writer.drain()
+        except Exception:
+            pass
 
     # Tunnel bidirectionnel
     await asyncio.gather(
