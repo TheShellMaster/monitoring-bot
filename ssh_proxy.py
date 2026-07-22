@@ -54,38 +54,38 @@ async def _consume_http_payload(reader):
         if not buf:
             return is_connect, buf
 
-        # Détecter le type de méthode
-        if buf.startswith(b"CONNECT"):
+        # Détecter le type de méthode pour savoir si on doit répondre HTTP 200
+        if any(buf.startswith(m) for m in HTTP_METHODS):
             is_connect = True
 
         # Consommer les blocks HTTP complets (\r\n\r\n)
-        while True:
-            if b"\r\n\r\n" in buf:
-                idx = buf.index(b"\r\n\r\n") + 4
-                remaining = buf[idx:]
-                # Si ce qui reste commence encore par une méthode HTTP → autre bloc payload
-                if any(remaining.startswith(m) for m in HTTP_METHODS):
-                    buf = remaining
-                    continue
-                else:
-                    # Ce n'est plus du HTTP, c'est le début du vrai trafic SSH !
-                    buf = remaining
+        # Les payloads personnalisés (HA Tunnel, HTTP Injector) ne sont pas toujours 
+        # du HTTP valide (ex: manque le \r\n\r\n final).
+        # La façon la plus robuste est de chercher le début du handshake SSH ("SSH-")
+        while b"SSH-" not in buf:
+            try:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
+                if not chunk:
                     break
-            else:
-                # Lire la suite du bloc HTTP incomplet
-                try:
-                    chunk = await asyncio.wait_for(reader.read(4096), timeout=3)
-                    if not chunk:
-                        break
-                    buf += chunk
-                except asyncio.TimeoutError:
-                    break
+                buf += chunk
+            except asyncio.TimeoutError:
+                break
+        
+        if b"SSH-" in buf:
+            idx = buf.index(b"SSH-")
+            # Tout ce qui est avant "SSH-" est le payload HTTP (on le jette)
+            # Tout ce qui est après (y compris "SSH-") est le vrai trafic
+            leftover = buf[idx:]
+        else:
+            # Si on ne trouve pas SSH-, on recrache tout pour laisser OpenSSH gérer l'erreur
+            leftover = buf
 
-        log.debug(f"Payload HTTP consommé (is_connect={is_connect}), reste {len(buf)} octets SSH.")
+        log.debug(f"Payload consommé. is_connect={is_connect}. Reste {len(leftover)} octets pour SSH.")
     except (asyncio.TimeoutError, asyncio.IncompleteReadError, ConnectionResetError):
         log.debug("Fin ou timeout lors de la lecture du payload HTTP")
+        leftover = buf
 
-    return is_connect, buf
+    return is_connect, leftover
 
 
 async def handle_client(reader, writer, mode="http"):
