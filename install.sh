@@ -6,7 +6,7 @@ set -e
 
 echo -e "\e[32m[1] Mise à jour du système et installation des dépendances...\e[0m"
 sudo apt-get update
-sudo apt-get install -y python3 python3-venv python3-pip curl wget openssl jq openssh-server
+sudo apt-get install -y python3 python3-venv python3-pip curl wget openssl jq openssh-server iptables
 
 echo -e "\e[32m[2] Détection de l'architecture...\e[0m"
 ARCH=$(uname -m)
@@ -75,7 +75,7 @@ sudo systemctl restart zivpn.service
 
 echo -e "\e[32m[6] Configuration des autorisations (Sudoers)...\e[0m"
 USER_CURRENT=$USER
-echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/bin/systemctl start ssh-proxy.service, /usr/bin/systemctl stop ssh-proxy.service, /usr/bin/systemctl restart ssh-proxy.service, /usr/bin/systemctl is-active ssh-proxy.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
+echo "$USER_CURRENT ALL=(ALL) NOPASSWD: /usr/bin/systemctl start zivpn.service, /usr/bin/systemctl stop zivpn.service, /usr/bin/systemctl restart zivpn.service, /usr/bin/systemctl is-active zivpn.service, /usr/bin/systemctl start ssh-proxy.service, /usr/bin/systemctl stop ssh-proxy.service, /usr/bin/systemctl restart ssh-proxy.service, /usr/bin/systemctl is-active ssh-proxy.service, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json, /usr/bin/tee /etc/security/limits.conf, /usr/bin/sed, /usr/sbin/iptables, /sbin/iptables" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
 sudo chmod 440 /etc/sudoers.d/bot-vpn
 
 echo -e "\e[32m[6b] Configuration OpenSSH (sécurisation + autorisation des mots de passe)...\e[0m"
