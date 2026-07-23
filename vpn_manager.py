@@ -124,7 +124,7 @@ def del_user(username):
 
 def lock_user(username):
     try:
-        if not MOCK_MODE:
+        if not MOCK_MODE and _user_exists(username):
             subprocess.run(["sudo", "usermod", "-L", username], check=False, timeout=5)
             subprocess.run(["sudo", "pkill", "-u", username], stderr=subprocess.DEVNULL)
         _update_zivpn_config(username, "del")
@@ -138,9 +138,16 @@ def lock_user(username):
         log.error(f"Error locking user: {e}")
         return False
 
+def _user_exists(username):
+    try:
+        subprocess.run(["id", username], check=True, capture_output=True, timeout=5)
+        return True
+    except:
+        return False
+
 def unlock_user(username):
     try:
-        if not MOCK_MODE:
+        if not MOCK_MODE and _user_exists(username):
             subprocess.run(["sudo", "usermod", "-U", username], check=True, timeout=5)
         _update_zivpn_config(username, "add")
         conn = sqlite3.connect(DB_PATH)
@@ -172,21 +179,17 @@ def get_user(username):
 def update_user_field(username, field, value):
     try:
         if field == "password":
-            if not MOCK_MODE:
+            if not MOCK_MODE and _user_exists(username):
                 proc = subprocess.Popen(["sudo", "chpasswd"], stdin=subprocess.PIPE, text=True)
                 proc.communicate(f"{username}:{value}", timeout=5)
                 if proc.returncode != 0: raise Exception("Failed to set password")
             col = "password"
         elif field == "expires_at":
-            # value should be "YYYY-MM-DD HH:MM"
             dt = datetime.strptime(value, "%Y-%m-%d %H:%M")
-            if not MOCK_MODE:
+            if not MOCK_MODE and _user_exists(username):
                 subprocess.run(["sudo", "chage", "-E", dt.strftime("%Y-%m-%d"), username], check=True, timeout=5)
-            
-            # If the new date is in the future, unlock the user
             if dt.replace(tzinfo=TZ) > _now():
                 unlock_user(username)
-                
             col = "expires_at"
             value = dt.strftime("%Y-%m-%d %H:%M:%S")
         else:
