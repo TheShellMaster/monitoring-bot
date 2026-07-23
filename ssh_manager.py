@@ -214,10 +214,18 @@ def del_user(username):
         return False, str(e)
 
 
+def _user_exists(username):
+    try:
+        subprocess.run(["id", username], check=True, capture_output=True, timeout=5)
+        return True
+    except:
+        return False
+
 def lock_user(username):
     """Verrouille un compte SSH expiré sans le supprimer."""
-    _run(["sudo", "usermod", "-L", username])
-    _run(["sudo", "pkill", "-u", username])
+    if _user_exists(username):
+        _run(["sudo", "usermod", "-L", username])
+        _run(["sudo", "pkill", "-u", username])
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -231,7 +239,9 @@ def lock_user(username):
 
 def unlock_user(username):
     """Déverrouille un compte SSH (suite à prolongation)."""
-    ok = _run(["sudo", "usermod", "-U", username])
+    ok = True
+    if _user_exists(username):
+        ok = _run(["sudo", "usermod", "-U", username])
     try:
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -265,7 +275,7 @@ def update_user_field(username, field, value):
     """Met à jour un champ d'un compte SSH (password, expires_at, max_conn)."""
     try:
         if field == "password":
-            if not MOCK_MODE:
+            if not MOCK_MODE and _user_exists(username):
                 proc = subprocess.Popen(["sudo", "chpasswd"], stdin=subprocess.PIPE, text=True)
                 proc.communicate(f"{username}:{value}", timeout=5)
             col = "password"

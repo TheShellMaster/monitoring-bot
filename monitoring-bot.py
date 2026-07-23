@@ -1167,6 +1167,8 @@ def main():
         return
 
     app = Application.builder().token(token).post_init(post_init).build()
+    ssh_manager.init_db()
+    vpn_manager.init_db()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("system", system))
     app.add_handler(CommandHandler("status", status))

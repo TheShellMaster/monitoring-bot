@@ -10,11 +10,15 @@ warn()  { echo -e "\e[33mATTENTION: $1\e[0m"; }
 
 # ── Vérification user ──
 if [ "$(id -u)" = "0" ]; then
-    USER_CURRENT=$(logname 2>/dev/null || echo "root")
-    warn "Lance en root. Le bot tournera sous l'utilisateur '$USER_CURRENT'."
+    USER_DETECTED=$(logname 2>/dev/null || echo "root")
 else
-    USER_CURRENT=$USER
+    USER_DETECTED=$USER
 fi
+echo ""
+echo -e "\e[32m[!] Configuration de l'utilisateur systeme...\e[0m"
+echo "Utilisateur systeme detecte : $USER_DETECTED"
+read -p "Nom d'utilisateur pour les services (Entree = $USER_DETECTED) : " USER_INPUT
+USER_CURRENT="${USER_INPUT:-$USER_DETECTED}"
 BOT_DIR=$(pwd)
 
 # ── [1] Dépendances système ──
