@@ -97,13 +97,25 @@ def _iptables_remove(username):
     if MOCK_MODE:
         return True
     for chain in ["OUTPUT", "INPUT"]:
-        for _ in range(10):
+        while True:
             try:
-                r = subprocess.run(["sudo", "iptables", "-D", chain, "-m", "comment",
-                                    "--comment", f"ssh_data_{username}"],
-                                   capture_output=True, check=False, timeout=5)
-                if r.returncode != 0:
+                r = subprocess.run(
+                    ["sudo", "iptables", "-L", chain, "--line-numbers", "-n"],
+                    capture_output=True, text=True, timeout=5
+                )
+                num = None
+                for line in r.stdout.splitlines():
+                    if f"ssh_data_{username}" in line:
+                        parts = line.strip().split()
+                        if parts and parts[0].isdigit():
+                            num = int(parts[0])
+                            break
+                if num is None:
                     break
+                subprocess.run(
+                    ["sudo", "iptables", "-D", chain, str(num)],
+                    check=False, timeout=5
+                )
             except Exception:
                 break
 
@@ -112,9 +124,22 @@ def _iptables_zero(username):
         return
     for chain in ["OUTPUT", "INPUT"]:
         try:
-            subprocess.run(["sudo", "iptables", "-Z", chain, "-m", "comment",
-                            "--comment", f"ssh_data_{username}"],
-                           check=False, timeout=5)
+            r = subprocess.run(
+                ["sudo", "iptables", "-L", chain, "--line-numbers", "-n"],
+                capture_output=True, text=True, timeout=5
+            )
+            num = None
+            for line in r.stdout.splitlines():
+                if f"ssh_data_{username}" in line:
+                    parts = line.strip().split()
+                    if parts and parts[0].isdigit():
+                        num = int(parts[0])
+                        break
+            if num is not None:
+                subprocess.run(
+                    ["sudo", "iptables", "-Z", chain, str(num)],
+                    check=False, timeout=5
+                )
         except Exception:
             pass
 
