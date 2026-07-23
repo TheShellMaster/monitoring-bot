@@ -97,12 +97,15 @@ def _iptables_remove(username):
     if MOCK_MODE:
         return True
     for chain in ["OUTPUT", "INPUT"]:
-        try:
-            subprocess.run(["sudo", "iptables", "-D", chain, "-m", "comment",
-                            "--comment", f"ssh_data_{username}"],
-                           check=False, timeout=5)
-        except Exception:
-            pass
+        for _ in range(10):
+            try:
+                r = subprocess.run(["sudo", "iptables", "-D", chain, "-m", "comment",
+                                    "--comment", f"ssh_data_{username}"],
+                                   capture_output=True, check=False, timeout=5)
+                if r.returncode != 0:
+                    break
+            except Exception:
+                break
 
 def _iptables_zero(username):
     if MOCK_MODE:
