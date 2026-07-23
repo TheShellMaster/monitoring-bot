@@ -151,6 +151,7 @@ def _sync_iptables():
         c = conn.cursor()
         c.execute("SELECT username, data_limit_mb FROM ssh_users WHERE data_limit_mb > 0")
         for row in c.fetchall():
+            _iptables_remove(row[0])
             _iptables_add(row[0])
         conn.close()
     except Exception:
