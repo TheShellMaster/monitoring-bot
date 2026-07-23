@@ -150,9 +150,9 @@ async def start(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         )
     else:
         await upd.message.reply_text(
-            "\u26d4 <b>Acces refusé</b>\n"
-            "Ce bot est privé. Contacte l'administrateur pour obtenir un code d'accès.\n\n"
-            "Utilise <code>/auth VOTRE_CODE</code> pour te connecter.",
+            f"\u26d4 <b>Acces refusé</b>\n"
+            f"Ce bot est privé. Contacte l'admin : {ADMIN_LINK}\n\n"
+            f"Utilise <code>/auth VOTRE_CODE</code> pour te connecter.",
             parse_mode="HTML"
         )
 
@@ -396,9 +396,11 @@ async def help(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         "\U0001f6e1 <b>Gestion des Acces</b>\n"
         "\U0001f5e1 /vpn     - Gestion VPN (ZiVPN UDP port 443)\n"
         "\U0001f511 /ssh     - Gestion SSH Payload (ports 2053/8443)\n"
-        "   \u2192 Creer/supprimer/modifier comptes\n"
+        "   \u2192 Creation par boutons (+1j, +7j... + choix heure)\n"
         "   \u2192 Limiter connexions simultanees\n"
-        "   \u2192 Quota data (MB)\n\n"
+        "   \u2192 Quota data (MB)\n"
+        "\U0001f511 /grant   - Creer un code invite (admin)\n"
+        "\U0001f511 /auth    - Se connecter avec un code invite\n\n"
         "\U0001f514 <b>Alertes automatiques</b>\n"
         "\u2022 CPU > 80%  |  RAM > 85%  |  Disque > 85%\n"
         "\u2022 Comptes expires verrouilles + notifies\n"
