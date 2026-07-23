@@ -649,6 +649,8 @@ SSH_W_USER, SSH_W_PASS, SSH_W_DUR = range(10, 13)
 SSH_W_EDIT_PASS, SSH_W_EDIT_EXP  = range(13, 15)
 SSH_W_CONN = 15
 SSH_W_DATA = 16
+SSH_W_EDIT_CONN = 17
+SSH_W_EDIT_DATA = 18
 
 async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await _req_admin(upd): return
@@ -730,6 +732,8 @@ async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         kb = [
             [InlineKeyboardButton("✏️ Changer Pass", callback_data=f"ssheditpass_{u}")],
             [InlineKeyboardButton("⏳ Changer Expiration", callback_data=f"ssheditexp_{u}")],
+            [InlineKeyboardButton("🔗 Modifier Connexions", callback_data=f"ssheditconn_{u}"),
+             InlineKeyboardButton("💾 Modifier Quota Data", callback_data=f"ssheditdata_{u}")],
             [InlineKeyboardButton("❌ Supprimer", callback_data=f"sshdel_{u}")],
         ]
         await q.message.reply_text(out, reply_markup=InlineKeyboardMarkup(kb), parse_mode="HTML")
@@ -763,6 +767,16 @@ async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data['ssh_edit_user'] = d.split("_", 1)[1]
         await q.message.reply_text("\u23f3 Choisis la durée avant expiration :", reply_markup=_exp_presets_kb("sshexp"))
         return SSH_W_EDIT_EXP
+
+    if d.startswith("ssheditconn_"):
+        ctx.user_data['ssh_edit_user'] = d.split("_", 1)[1]
+        await q.message.reply_text("\U0001f517 Entrez la **nouvelle limite de connexions** (ex: `2`, ou `0` pour illimité) :", parse_mode="Markdown")
+        return SSH_W_EDIT_CONN
+
+    if d.startswith("ssheditdata_"):
+        ctx.user_data['ssh_edit_user'] = d.split("_", 1)[1]
+        await q.message.reply_text("\U0001f4be Entrez le **nouveau quota data en MB** (ex: `500`, ou `0` pour illimité) :", parse_mode="Markdown")
+        return SSH_W_EDIT_DATA
 
 async def ssh_v_user(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ctx.user_data['ssh_user'] = upd.message.text.strip()
@@ -938,6 +952,30 @@ async def ssh_edit_exp_text(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     user = ctx.user_data['ssh_edit_user']
     ok, msg = ssh_manager.update_user_field(user, "expires_at", upd.message.text.strip())
     await upd.message.reply_text(f"Expiration SSH de {user} : {msg}")
+    return ConversationHandler.END
+
+async def ssh_edit_conn(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = ctx.user_data.get('ssh_edit_user')
+    val = upd.message.text.strip()
+    try:
+        int(val)
+    except ValueError:
+        await upd.message.reply_text("Invalide. Entre un nombre entier (ex: `2`) ou `0` pour illimité.", parse_mode="Markdown")
+        return SSH_W_EDIT_CONN
+    ok, msg = ssh_manager.update_user_field(user, "max_conn", val)
+    await upd.message.reply_text(f"Connexions SSH de {user} : {msg}")
+    return ConversationHandler.END
+
+async def ssh_edit_data(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    user = ctx.user_data.get('ssh_edit_user')
+    val = upd.message.text.strip()
+    try:
+        int(val)
+    except ValueError:
+        await upd.message.reply_text("Invalide. Entre un nombre en MB (ex: `500`) ou `0` pour illimité.", parse_mode="Markdown")
+        return SSH_W_EDIT_DATA
+    ok, msg = ssh_manager.update_user_field(user, "data_limit_mb", val)
+    await upd.message.reply_text(f"Quota data SSH de {user} : {msg}")
     return ConversationHandler.END
 
 # --- END SSH CRM ---
@@ -1223,6 +1261,8 @@ def main():
                 CallbackQueryHandler(ssh_cb, pattern="^ssh_new$"),
                 CallbackQueryHandler(ssh_cb, pattern="^ssheditpass_"),
                 CallbackQueryHandler(ssh_cb, pattern="^ssheditexp_"),
+                CallbackQueryHandler(ssh_cb, pattern="^ssheditconn_"),
+                CallbackQueryHandler(ssh_cb, pattern="^ssheditdata_"),
             ],
             states={
                 SSH_W_USER:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_user)],
@@ -1244,6 +1284,8 @@ def main():
                     CallbackQueryHandler(ssh_edit_exp_manual, pattern="^sshexp_manual$"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_exp_text)
                 ],
+                SSH_W_EDIT_CONN:[MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_conn)],
+                SSH_W_EDIT_DATA:[MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_data)],
             },
             fallbacks=[CommandHandler("cancel", v_cancel)],
             per_message=False,

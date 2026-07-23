@@ -301,7 +301,7 @@ def get_user(username):
 
 
 def update_user_field(username, field, value):
-    """Met à jour un champ d'un compte SSH (password, expires_at, max_conn)."""
+    """Met à jour un champ d'un compte SSH (password, expires_at, max_conn, data_limit_mb)."""
     try:
         if field == "password":
             if not MOCK_MODE and _user_exists(username):
@@ -319,9 +319,20 @@ def update_user_field(username, field, value):
         elif field == "max_conn":
             max_conn = int(value)
             _limits_conf_remove(username)
-            _limits_conf_add(username, max_conn)
+            if max_conn > 0:
+                _limits_conf_add(username, max_conn)
             col = "max_conn"
             value = max_conn
+
+        elif field == "data_limit_mb":
+            dlm = int(value)
+            if dlm > 0:
+                _iptables_remove(username)
+                _iptables_add(username)
+            else:
+                _iptables_remove(username)
+            col = "data_limit_mb"
+            value = dlm
 
         else:
             return False, "Champ inconnu"
