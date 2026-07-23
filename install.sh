@@ -186,6 +186,22 @@ fi
 echo "TELEGRAM_BOT_TOKEN=$BOT_TOKEN" > .env_bot
 echo "TZ=$TZ_INPUT" >> .env_bot
 
+# ID Admin Telegram
+echo ""
+echo -e "\e[32m[!] Configuration de l'administrateur...\e[0m"
+echo "Pour trouver ton ID Telegram :"
+echo "  1. Envoie /start a ton bot"
+echo "  2. Va sur https://api.telegram.org/bot${BOT_TOKEN}/getUpdates"
+echo "  3. Cherche 'chat':{\"id\": TON_ID} dans la reponse JSON"
+echo ""
+read -p "Colle ton ID Telegram (ou appuie sur Entree pour plus tard) : " ADMIN_ID
+if [ -n "$ADMIN_ID" ]; then
+    echo "ADMIN_CHAT_ID=$ADMIN_ID" >> .env_bot
+    echo "  -> Admin configure"
+else
+    echo "  -> Tu pourras ajouter ADMIN_CHAT_ID dans .env_bot plus tard"
+fi
+
 # Service monitoring-bot
 sudo tee /etc/systemd/system/monitoring-bot.service > /dev/null <<EOF
 [Unit]

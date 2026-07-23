@@ -26,6 +26,52 @@ def reg(cid):
     chat_ids.add(cid)
     save()
 
+# ── Auth codes guest ──
+AUTH_CODES_FILE = BASE_DIR / ".auth_codes.json"
+AUTHORIZED_FILE = BASE_DIR / ".authorized_ids.json"
+
+auth_codes = {}
+authorized_ids = set()
+if AUTH_CODES_FILE.exists():
+    auth_codes = json.loads(AUTH_CODES_FILE.read_text())
+if AUTHORIZED_FILE.exists():
+    authorized_ids = set(json.loads(AUTHORIZED_FILE.read_text()))
+
+def _save_codes():
+    AUTH_CODES_FILE.write_text(json.dumps(auth_codes))
+def _save_auth():
+    AUTHORIZED_FILE.write_text(json.dumps(list(authorized_ids)))
+
+def _get_admin():
+    v = os.getenv("ADMIN_CHAT_ID")
+    if v: return v.strip()
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().strip().splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                if k.strip() == "ADMIN_CHAT_ID":
+                    return v.strip().strip("\"'")
+    return None
+
+def is_admin(cid):
+    a = _get_admin()
+    return a is not None and str(cid) == a
+
+def is_authorized(cid):
+    return is_admin(cid) or cid in authorized_ids
+
+async def _req_auth(upd):
+    if not is_authorized(upd.effective_chat.id):
+        await upd.message.reply_text("\u26d4 Acces refuse. Contacte l'admin ou utilise /auth CODE.")
+        return False
+    return True
+
+async def _req_admin(upd):
+    if not is_admin(upd.effective_chat.id):
+        await upd.message.reply_text("\u26d4 Reserve a l'admin.")
+        return False
+    return True
+
 def scale(n):
     for u in ["B","KB","MB","GB","TB"]:
         if n < 1024:
@@ -59,14 +105,71 @@ def get_token():
     return None
 
 async def start(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    reg(upd.effective_chat.id)
+    cid = upd.effective_chat.id
+    reg(cid)
+    if is_admin(cid):
+        await upd.message.reply_text(
+            "\U0001f916 Monitoring Bot\n"
+            f"{'='*28}\n"
+            "\U0001f4a1 Admin : acces total\n"
+            "\U0001f447 /grant pour creer un code invite\n"
+            "\U0001f447 /vpn ou /ssh pour gerer les acces\n"
+            "\U0001f447 /help pour les commandes"
+        )
+    elif is_authorized(cid):
+        await upd.message.reply_text(
+            "\U0001f916 Monitoring Bot\n"
+            f"{'='*28}\n"
+            "\U0001f4a1 Acces invite - Monitoring seulement\n"
+            "\U0001f447 /status, /cpu, /ram, /disk, /gpu, /network, /system"
+        )
+    else:
+        await upd.message.reply_text(
+            "\u26d4 <b>Acces refusé</b>\n"
+            "Ce bot est privé. Contacte l'administrateur pour obtenir un code d'accès.\n\n"
+            "Utilise <code>/auth VOTRE_CODE</code> pour te connecter.",
+            parse_mode="HTML"
+        )
+
+async def grant(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    cid = upd.effective_chat.id
+    if not is_admin(cid):
+        await upd.message.reply_text("\u26d4 Reserve a l'admin.")
+        return
+    import secrets, string
+    code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+    auth_codes[code] = True
+    _save_codes()
     await upd.message.reply_text(
-        "\U0001f916 Monitoring Bot\n"
-        f"{'='*28}\n"
-        "\U0001f4a1 Surveillance materiel en temps reel\n"
-        "\U0001f447 Tape / pour voir les commandes\n"
-        "\U0001f514 Alertes automatiques si seuil depasse"
+        f"\U0001f511 <b>Code invite generé</b>\n"
+        f"<code>{code}</code>\n\n"
+        f"Valable pour une seule connexion. Envoie-le à ton invite.",
+        parse_mode="HTML"
     )
+
+async def auth(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    cid = upd.effective_chat.id
+    if is_authorized(cid):
+        await upd.message.reply_text("Tu es déjà connecté.")
+        return
+    parts = upd.message.text.strip().split(None, 1)
+    if len(parts) < 2:
+        await upd.message.reply_text("Utilise : <code>/auth CODE</code>", parse_mode="HTML")
+        return
+    code = parts[1].strip()
+    if code in auth_codes and auth_codes[code]:
+        authorized_ids.add(cid)
+        _save_auth()
+        del auth_codes[code]
+        _save_codes()
+        await upd.message.reply_text(
+            "\u2705 <b>Connexion réussie !</b>\n"
+            "Tu as maintenant accès au monitoring du serveur.\n"
+            "Tape /start pour voir les commandes disponibles.",
+            parse_mode="HTML"
+        )
+    else:
+        await upd.message.reply_text("Code invalide ou déjà utilisé.")
 
 def build_status():
     cpup = psutil.cpu_percent(interval=1)
@@ -89,6 +192,7 @@ def build_status():
     )
 
 async def status(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_status(), reply_markup=refresh_btn("status"))
 
@@ -108,6 +212,7 @@ def build_system():
     )
 
 async def system(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_system(), reply_markup=refresh_btn("system"))
 
@@ -127,6 +232,7 @@ def build_cpu():
     )
 
 async def cpu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_cpu(), reply_markup=refresh_btn("cpu"))
 
@@ -150,6 +256,7 @@ def build_ram():
     )
 
 async def ram(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_ram(), reply_markup=refresh_btn("ram"))
 
@@ -171,6 +278,7 @@ def build_disk():
     )
 
 async def disk(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_disk(), reply_markup=refresh_btn("disk"))
 
@@ -196,6 +304,7 @@ def build_gpu():
     return "\U0001f3ae GPU\nNon disponible"
 
 async def gpu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_gpu(), reply_markup=refresh_btn("gpu"))
 
@@ -241,10 +350,12 @@ def build_network():
     return "\n".join(lines)
 
 async def network(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(build_network(), reply_markup=refresh_btn("network"))
 
 async def help(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     await upd.message.reply_text(
         "\U0001f916 <b>Commandes disponibles</b>\n"
@@ -276,6 +387,7 @@ W_USER, W_PASS, W_DUR = range(3)
 W_EDIT_PASS, W_EDIT_EXP = range(3, 5)
 
 async def vpn_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_admin(upd): return
     vpn_manager.init_db()
     st = vpn_manager.check_zivpn_status()
     st_text = "🟢 ALLUMÉ" if st else "🔴 ÉTEINT"
@@ -297,6 +409,9 @@ async def vpn_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def vpn_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
     await q.answer()
+    if not is_admin(upd.effective_chat.id):
+        await q.message.reply_text("\u26d4 Reserve a l'admin.")
+        return ConversationHandler.END
     d = q.data
 
     if d == "vpn_start" or d == "vpn_stop":
@@ -447,6 +562,7 @@ SSH_W_CONN = 15
 SSH_W_DATA = 16
 
 async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_admin(upd): return
     ssh_manager.init_db()
     st = ssh_manager.check_proxy_status()
     st_text = "🟢 ALLUMÉ" if st else "🔴 ÉTEINT"
@@ -474,6 +590,9 @@ async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
     await q.answer()
+    if not is_admin(upd.effective_chat.id):
+        await q.message.reply_text("\u26d4 Reserve a l'admin.")
+        return ConversationHandler.END
     d = q.data
 
     # ── ON / OFF du proxy ──
@@ -749,6 +868,9 @@ async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
 async def refresh_callback(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     query = upd.callback_query
     await query.answer()
+    if not is_authorized(upd.effective_chat.id):
+        await query.message.reply_text("\u26d4 Acces refuse.")
+        return
     cmd = query.data.replace("r_", "")
     builders = {
         "status": build_status,
@@ -830,6 +952,7 @@ def greet_reply():
     return "Bonsoir"
 
 async def chat_handler(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    if not await _req_auth(upd): return
     reg(upd.effective_chat.id)
     msg = upd.message.text.strip()
 
@@ -878,6 +1001,8 @@ async def post_init(app: Application):
         BotCommand("network", "Stats reseau"),
         BotCommand("vpn", "Gestion comptes ZiVPN"),
         BotCommand("ssh", "Gestion comptes SSH (Payload)"),
+        BotCommand("grant", "Creer un code invite (admin)"),
+        BotCommand("auth", "Se connecter avec un code invite"),
         BotCommand("help", "Aide"),
     ]
     await app.bot.set_my_commands(cmds)
@@ -899,6 +1024,8 @@ def main():
     app.add_handler(CommandHandler("gpu", gpu))
     app.add_handler(CommandHandler("network", network))
     app.add_handler(CommandHandler("help", help))
+    app.add_handler(CommandHandler("grant", grant))
+    app.add_handler(CommandHandler("auth", auth))
     app.add_handler(CommandHandler("vpn", vpn_menu))
 
     conv_handler = ConversationHandler(
