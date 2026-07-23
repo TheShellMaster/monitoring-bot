@@ -11,6 +11,7 @@ import ssh_manager
 BASE_DIR = Path(__file__).parent.resolve()
 CHAT_ID_FILE = BASE_DIR / ".bot_chat_ids.json"
 ENV_FILE = BASE_DIR / ".env_bot"
+ADMIN_LINK = "t.me/King_premium_N5"
 
 logging.basicConfig(level=logging.INFO, style="{", format="{asctime} [{levelname}] {message}")
 log = logging.getLogger(__name__)
@@ -62,7 +63,7 @@ def is_authorized(cid):
 
 async def _req_auth(upd):
     if not is_authorized(upd.effective_chat.id):
-        await upd.message.reply_text("\u26d4 Acces refuse. Contacte l'admin ou utilise /auth CODE.")
+        await upd.message.reply_text(f"\u26d4 Acces refuse. Contacte l'admin : {ADMIN_LINK}\nou utilise /auth CODE.")
         return False
     return True
 
@@ -100,6 +101,17 @@ def _exp_presets_kb(prefix="exp"):
          InlineKeyboardButton("+60j", callback_data=f"{prefix}_60")],
         [InlineKeyboardButton("+90j", callback_data=f"{prefix}_90"),
          InlineKeyboardButton("\u270f\ufe0f Saisir date", callback_data=f"{prefix}_manual")],
+    ]
+    return InlineKeyboardMarkup(kb)
+
+def _exp_time_kb(prefix):
+    kb = [
+        [InlineKeyboardButton("00:00", callback_data=f"{prefix}t_0000"),
+         InlineKeyboardButton("06:00", callback_data=f"{prefix}t_0600"),
+         InlineKeyboardButton("12:00", callback_data=f"{prefix}t_1200")],
+        [InlineKeyboardButton("18:00", callback_data=f"{prefix}t_1800"),
+         InlineKeyboardButton("23:59", callback_data=f"{prefix}t_2359")],
+        [InlineKeyboardButton("\u2b05\ufe0f Retour", callback_data=f"{prefix}t_back")],
     ]
     return InlineKeyboardMarkup(kb)
 
@@ -182,7 +194,7 @@ async def auth(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="HTML"
         )
     else:
-        await upd.message.reply_text("Code invalide ou déjà utilisé.")
+        await upd.message.reply_text(f"Code invalide ou déjà utilisé.\nContacte l'admin : {ADMIN_LINK}")
 
 def build_status():
     cpup = psutil.cpu_percent(interval=1)
@@ -508,9 +520,25 @@ async def v_dur_preset(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
     await q.answer()
     days = int(q.data.split("_")[1])
+    ctx.user_data['v_dur_days'] = days
+    await q.message.edit_text(f"\u23f3 Choisis l'heure pour +{days}j :", reply_markup=_exp_time_kb("dur"))
+    return W_DUR
+
+async def v_dur_set_time(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    days = ctx.user_data.get('v_dur_days', 1)
+    ts = q.data.split("_")[-1]
     dt = datetime.now(vpn_manager.TZ) + timedelta(days=days)
+    dt = dt.replace(hour=int(ts[:2]), minute=int(ts[2:]), second=0, microsecond=0)
     ctx.user_data['v_dur'] = dt.strftime("%Y-%m-%d %H:%M")
     return await _create_account(upd, ctx)
+
+async def v_dur_back(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    await q.message.edit_text("\u23f3 Choisis la durée avant expiration :", reply_markup=_exp_presets_kb("dur"))
+    return W_DUR
 
 async def v_dur_manual(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
@@ -566,15 +594,31 @@ async def edit_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def edit_exp_preset(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
     await q.answer()
+    days = int(q.data.split("_")[1])
+    ctx.user_data['edit_days'] = days
+    await q.message.edit_text(f"\u23f3 Choisis l'heure pour +{days}j :", reply_markup=_exp_time_kb("exp"))
+    return W_EDIT_EXP
+
+async def edit_exp_set_time(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
     user = ctx.user_data.get('edit_user')
     if not user:
-        await q.message.reply_text("Erreur : utilisateur inconnu.")
+        await q.message.edit_text("Erreur : utilisateur inconnu.")
         return ConversationHandler.END
-    days = int(q.data.split("_")[1])
+    days = ctx.user_data.get('edit_days', 1)
+    ts = q.data.split("_")[-1]
     dt = datetime.now(vpn_manager.TZ) + timedelta(days=days)
+    dt = dt.replace(hour=int(ts[:2]), minute=int(ts[2:]), second=0, microsecond=0)
     ok, msg = vpn_manager.update_user_field(user, "expires_at", dt.strftime("%Y-%m-%d %H:%M"))
-    await q.message.reply_text(f"Mise à jour de l'expiration de {user} : {msg}")
+    await q.message.edit_text(f"Mise à jour de l'expiration de {user} : {msg}")
     return ConversationHandler.END
+
+async def edit_exp_back(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    await q.message.edit_text("\u23f3 Choisis la durée avant expiration :", reply_markup=_exp_presets_kb("exp"))
+    return W_EDIT_EXP
 
 async def edit_exp_manual(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
@@ -732,7 +776,17 @@ async def ssh_v_dur_preset(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
     await q.answer()
     days = int(q.data.split("_")[1])
+    ctx.user_data['ssh_dur_days'] = days
+    await q.message.edit_text(f"\u23f3 Choisis l'heure pour +{days}j :", reply_markup=_exp_time_kb("sshdur"))
+    return SSH_W_DUR
+
+async def ssh_v_dur_set_time(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    days = ctx.user_data.get('ssh_dur_days', 1)
+    ts = q.data.split("_")[-1]
     dt = datetime.now(vpn_manager.TZ) + timedelta(days=days)
+    dt = dt.replace(hour=int(ts[:2]), minute=int(ts[2:]), second=0, microsecond=0)
     ctx.user_data['ssh_dur'] = dt.strftime("%Y-%m-%d %H:%M")
     await q.message.reply_text(
         "\U0001f517 **Limite de connexions simultanées** (optionnel)\n"
@@ -740,6 +794,12 @@ async def ssh_v_dur_preset(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
     return SSH_W_CONN
+
+async def ssh_v_dur_back(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    await q.message.edit_text("\u23f3 Choisis la durée avant expiration :", reply_markup=_exp_presets_kb("sshdur"))
+    return SSH_W_DUR
 
 async def ssh_v_dur_manual(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
@@ -840,15 +900,31 @@ async def ssh_edit_pass(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def ssh_edit_exp_preset(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
     await q.answer()
+    days = int(q.data.split("_")[1])
+    ctx.user_data['ssh_edit_days'] = days
+    await q.message.edit_text(f"\u23f3 Choisis l'heure pour +{days}j :", reply_markup=_exp_time_kb("sshexp"))
+    return SSH_W_EDIT_EXP
+
+async def ssh_edit_exp_set_time(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
     user = ctx.user_data.get('ssh_edit_user')
     if not user:
-        await q.message.reply_text("Erreur : utilisateur inconnu.")
+        await q.message.edit_text("Erreur : utilisateur inconnu.")
         return ConversationHandler.END
-    days = int(q.data.split("_")[1])
+    days = ctx.user_data.get('ssh_edit_days', 1)
+    ts = q.data.split("_")[-1]
     dt = datetime.now(vpn_manager.TZ) + timedelta(days=days)
+    dt = dt.replace(hour=int(ts[:2]), minute=int(ts[2:]), second=0, microsecond=0)
     ok, msg = ssh_manager.update_user_field(user, "expires_at", dt.strftime("%Y-%m-%d %H:%M"))
-    await q.message.reply_text(f"Expiration SSH de {user} : {msg}")
+    await q.message.edit_text(f"Expiration SSH de {user} : {msg}")
     return ConversationHandler.END
+
+async def ssh_edit_exp_back(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    q = upd.callback_query
+    await q.answer()
+    await q.message.edit_text("\u23f3 Choisis la durée avant expiration :", reply_markup=_exp_presets_kb("sshexp"))
+    return SSH_W_EDIT_EXP
 
 async def ssh_edit_exp_manual(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = upd.callback_query
@@ -1115,12 +1191,16 @@ def main():
             W_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, v_pass)],
             W_DUR:  [
                 CallbackQueryHandler(v_dur_preset, pattern="^dur_\\d+$"),
+                CallbackQueryHandler(v_dur_set_time, pattern="^durt_\\d+$"),
+                CallbackQueryHandler(v_dur_back, pattern="^durt_back$"),
                 CallbackQueryHandler(v_dur_manual, pattern="^dur_manual$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, v_dur_text)
             ],
             W_EDIT_PASS: [MessageHandler(filters.TEXT & ~filters.COMMAND, edit_pass)],
             W_EDIT_EXP:  [
                 CallbackQueryHandler(edit_exp_preset, pattern="^exp_\\d+$"),
+                CallbackQueryHandler(edit_exp_set_time, pattern="^expt_\\d+$"),
+                CallbackQueryHandler(edit_exp_back, pattern="^expt_back$"),
                 CallbackQueryHandler(edit_exp_manual, pattern="^exp_manual$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, edit_exp_text)
             ]
@@ -1145,6 +1225,8 @@ def main():
                 SSH_W_PASS:     [MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_pass)],
                 SSH_W_DUR:      [
                     CallbackQueryHandler(ssh_v_dur_preset, pattern="^sshdur_\\d+$"),
+                    CallbackQueryHandler(ssh_v_dur_set_time, pattern="^sshdurt_\\d+$"),
+                    CallbackQueryHandler(ssh_v_dur_back, pattern="^sshdurt_back$"),
                     CallbackQueryHandler(ssh_v_dur_manual, pattern="^sshdur_manual$"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_v_dur_text)
                 ],
@@ -1153,6 +1235,8 @@ def main():
                 SSH_W_EDIT_PASS:[MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_pass)],
                 SSH_W_EDIT_EXP: [
                     CallbackQueryHandler(ssh_edit_exp_preset, pattern="^sshexp_\\d+$"),
+                    CallbackQueryHandler(ssh_edit_exp_set_time, pattern="^sshexpt_\\d+$"),
+                    CallbackQueryHandler(ssh_edit_exp_back, pattern="^sshexpt_back$"),
                     CallbackQueryHandler(ssh_edit_exp_manual, pattern="^sshexp_manual$"),
                     MessageHandler(filters.TEXT & ~filters.COMMAND, ssh_edit_exp_text)
                 ],
