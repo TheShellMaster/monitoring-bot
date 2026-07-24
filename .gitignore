@@ -4,3 +4,6 @@ __pycache__/
 *.pyc
 *.db
 handoff/
+ssl_proxy.crt
+ssl_proxy.key
+venv/

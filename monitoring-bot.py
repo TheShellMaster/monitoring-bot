@@ -413,8 +413,19 @@ async def help(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
 W_USER, W_PASS, W_DUR = range(3)
 W_EDIT_PASS, W_EDIT_EXP = range(3, 5)
 
+_conv_handler = None
+_ssh_conv = None
+
+def _end_convs(chat_id, user_id):
+    key = (chat_id, user_id)
+    if _conv_handler is not None:
+        _conv_handler._conversations.pop(key, None)
+    if _ssh_conv is not None:
+        _ssh_conv._conversations.pop(key, None)
+
 async def vpn_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await _req_admin(upd): return
+    _end_convs(upd.effective_chat.id, upd.effective_user.id)
     vpn_manager.init_db()
     st = vpn_manager.check_zivpn_status()
     st_text = "🟢 ALLUMÉ" if st else "🔴 ÉTEINT"
@@ -654,6 +665,7 @@ SSH_W_EDIT_DATA = 18
 
 async def ssh_menu(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not await _req_admin(upd): return
+    _end_convs(upd.effective_chat.id, upd.effective_user.id)
     ssh_manager.init_db()
     st = ssh_manager.check_proxy_status()
     st_text = "🟢 ALLUMÉ" if st else "🔴 ÉTEINT"
@@ -1222,6 +1234,7 @@ def main():
     app.add_handler(CommandHandler("auth", auth))
     app.add_handler(CommandHandler("vpn", vpn_menu))
 
+    global _conv_handler, _ssh_conv
     conv_handler = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(vpn_cb, pattern="^vpn_new$"),
@@ -1251,6 +1264,7 @@ def main():
         per_message=False,
     )
     app.add_handler(conv_handler)
+    _conv_handler = conv_handler
     app.add_handler(CallbackQueryHandler(vpn_cb, pattern="^vpn_|^vpninfo_"))
 
     # ── SSH CRM handlers ──
@@ -1291,6 +1305,7 @@ def main():
             per_message=False,
         )
     app.add_handler(ssh_conv)
+    _ssh_conv = ssh_conv
     app.add_handler(CallbackQueryHandler(ssh_cb, pattern="^ssh_|^sshinfo_|^sshdel_"))
 
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, chat_handler))

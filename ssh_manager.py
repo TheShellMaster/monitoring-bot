@@ -83,7 +83,7 @@ def _iptables_add(username):
     if uid is None:
         return False
     ok = True
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         try:
             subprocess.run(["sudo", "iptables", "-A", chain, "-m", "owner", "--uid-owner", str(uid),
                             "-m", "comment", "--comment", f"ssh_data_{username}"],
@@ -96,7 +96,7 @@ def _iptables_add(username):
 def _iptables_remove(username):
     if MOCK_MODE:
         return True
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         while True:
             try:
                 r = subprocess.run(
@@ -122,7 +122,7 @@ def _iptables_remove(username):
 def _iptables_zero(username):
     if MOCK_MODE:
         return
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         try:
             r = subprocess.run(
                 ["sudo", "iptables", "-L", chain, "--line-numbers", "-n"],
@@ -206,6 +206,7 @@ def add_user(username, password, expires_at_str, max_conn=0, data_limit_mb=0):
             proc.communicate(f"{username}:{password}", timeout=5)
         _run(["sudo", "chage", "-E", "-1", username])
         _run(["sudo", "usermod", "-U", username])
+        _run(["sudo", "usermod", "-aG", "vpnusers", username])
 
         _limits_conf_add(username, max_conn)
         if data_limit_mb > 0:
