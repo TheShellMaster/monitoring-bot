@@ -84,7 +84,7 @@ def _iptables_add(username):
     if uid is None:
         return False
     ok = True
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         try:
             subprocess.run(["sudo", "iptables", "-A", chain, "-m", "owner", "--uid-owner", str(uid),
                             "-m", "comment", "--comment", f"ssh_data_{username}"],
@@ -97,7 +97,7 @@ def _iptables_add(username):
 def _iptables_remove(username):
     if MOCK_MODE:
         return True
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         while True:
             try:
                 r = subprocess.run(
@@ -123,7 +123,7 @@ def _iptables_remove(username):
 def _iptables_zero(username):
     if MOCK_MODE:
         return
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         try:
             r = subprocess.run(
                 ["sudo", "iptables", "-L", chain, "--line-numbers", "-n"],
@@ -231,8 +231,8 @@ def add_user(username, password, expires_at_str, max_conn=0, data_limit_mb=0):
 def del_user(username):
     """Supprime définitivement un compte Linux SSH."""
     try:
+        _run(["sudo", "pkill", "-u", username], check=False)
         _run(["sudo", "userdel", "-r", username], check=False)
-        _run(["sudo", "pkill", "-u", username])
         _limits_conf_remove(username)
         _iptables_remove(username)
         conn = sqlite3.connect(DB_PATH)
@@ -368,7 +368,7 @@ def get_user_data_mb(username):
     if uid is None:
         return 0.0
     total = 0
-    for chain in ["OUTPUT", "INPUT"]:
+    for chain in ["OUTPUT"]:
         try:
             r = subprocess.run(
                 ["sudo", "iptables", "-L", chain, "-v", "-n", "-x"],
