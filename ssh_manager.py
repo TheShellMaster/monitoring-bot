@@ -14,7 +14,8 @@ from datetime import datetime
 
 log = logging.getLogger(__name__)
 
-DB_PATH = "ssh_accounts.db"
+_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.getenv("SSH_DB_PATH", os.path.join(_DIR, "ssh_accounts.db"))
 LIMITS_CONF = "/etc/security/limits.conf"
 TZ = zoneinfo.ZoneInfo(os.getenv("TZ", "Africa/Douala"))
 
@@ -83,7 +84,7 @@ def _iptables_add(username):
     if uid is None:
         return False
     ok = True
-    for chain in ["OUTPUT"]:
+    for chain in ["OUTPUT", "INPUT"]:
         try:
             subprocess.run(["sudo", "iptables", "-A", chain, "-m", "owner", "--uid-owner", str(uid),
                             "-m", "comment", "--comment", f"ssh_data_{username}"],
@@ -96,7 +97,7 @@ def _iptables_add(username):
 def _iptables_remove(username):
     if MOCK_MODE:
         return True
-    for chain in ["OUTPUT"]:
+    for chain in ["OUTPUT", "INPUT"]:
         while True:
             try:
                 r = subprocess.run(
@@ -122,7 +123,7 @@ def _iptables_remove(username):
 def _iptables_zero(username):
     if MOCK_MODE:
         return
-    for chain in ["OUTPUT"]:
+    for chain in ["OUTPUT", "INPUT"]:
         try:
             r = subprocess.run(
                 ["sudo", "iptables", "-L", chain, "--line-numbers", "-n"],

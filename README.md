@@ -25,12 +25,12 @@ Commande interactive pour votre serveur **ZiVPN (UDP)** :
 - **Verrouillage auto** : Les comptes expirés sont verrouillés automatiquement à la minute près (pas de double alerte)
 
 ### 🛡️ Gestionnaire SSH Payload — `/ssh`
-Commande interactive pour votre **Proxy SSH Custom** (HTTP Injection + SSL Passthrough) :
-- **Double Proxy** : HTTP Injection (Port `2053`) + SSL Passthrough (Port `8443`)
+Commande interactive pour votre **Proxy SSH Custom** (HTTP Injection + SSL/TLS) :
+- **Double Proxy** : HTTP Injection (Port `2053`) + SSL/TLS avec SNI (Port `8443`)
 - **ON/OFF** : Démarrer/Stopper `ssh-proxy.service` depuis Telegram
 - **Création** : User → Pass → Expiration par boutons → **Limite connexions max** → **Quota data (MB)**
 - **Limites de connexion** : Contrôle via PAM (`/etc/security/limits.conf`) — le système Linux refuse la Nième connexion
-- **Quota data** : Tracking par iptables (par UID) — le bot cumule les octets toutes les 60s et verrouille le compte si dépassement
+- **Quota data** : Tracking par iptables (INPUT + OUTPUT par UID) — le bot cumule les octets toutes les 60s et verrouille le compte si dépassement
 - **Parsing robuste** : Détecte `SSH-2.0` dans le payload, compatible HA Tunnel Plus, HTTP Injector, HTTP Custom...
 - **Expiration automatique** : Vérification précise chaque minute, verrouillage immédiat
 

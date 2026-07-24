@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """
 SSH Payload Proxy - Port 2053 (HTTP Injection) + Port 8443 (SSL/TLS)
+Supporte toutes les méthodes TCP : CONNECT, GET, POST, HEAD, PUT, DELETE, OPTIONS
+Terminaison TLS/SSL avec SNI sur le port 8443
 """
 import asyncio
 import logging
@@ -15,8 +17,9 @@ SSH_PORT = 22
 HTTP_PROXY_PORT = int(os.getenv("SSH_HTTP_PORT", 2053))
 SSL_PROXY_PORT  = int(os.getenv("SSH_SSL_PORT",  8443))
 
-SSL_CERT = os.getenv("SSL_CERT", "/home/ubuntu/monitoring-bot-new/ssl_proxy.crt")
-SSL_KEY  = os.getenv("SSL_KEY",  "/home/ubuntu/monitoring-bot-new/ssl_proxy.key")
+_DIR = os.path.dirname(os.path.abspath(__file__))
+SSL_CERT = os.getenv("SSL_CERT", os.path.join(_DIR, "ssl_proxy.crt"))
+SSL_KEY  = os.getenv("SSL_KEY",  os.path.join(_DIR, "ssl_proxy.key"))
 
 HTTP_200 = b"HTTP/1.1 200 Connection Established\r\n\r\n"
 HTTP_METHODS = (b"CONNECT", b"GET", b"POST", b"HEAD", b"PUT", b"DELETE", b"OPTIONS")
@@ -56,7 +59,7 @@ async def handle_client(reader, writer, mode="http"):
                 log.info(f"[{mode.upper()}] Payload HTTP detecte de {peer}")
                 writer.write(HTTP_200)
                 await writer.drain()
-                log.info(f"[{mode.upper()}] Reponse 200 OK envoyee a {peer} pour {first_word.decode(errors="ignore")}")
+                log.info(f"[{mode.upper()}] Reponse 200 OK envoyee a {peer} pour {first_word.decode(errors='ignore')}")
 
                 if b"SSH-" in data:
                     idx = data.index(b"SSH-")
