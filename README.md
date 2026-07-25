@@ -30,7 +30,7 @@ Commande interactive pour votre **Proxy SSH Custom** (HTTP Injection + SSL/TLS) 
 - **ON/OFF** : Démarrer/Stopper `ssh-proxy.service` depuis Telegram
 - **Création** : User → Pass → Expiration par boutons → **Limite connexions max** → **Quota data (MB)**
 - **Limites de connexion** : Contrôle via PAM (`/etc/security/limits.conf`) — le système Linux refuse la Nième connexion
-- **Quota data** : Tracking par iptables (INPUT + OUTPUT par UID) — le bot cumule les octets toutes les 60s et verrouille le compte si dépassement
+- **Quota data** : Tracking par iptables (`OUTPUT` par UID) — le bot cumule les octets toutes les 60s et verrouille le compte si dépassement
 - **Parsing robuste** : Détecte `SSH-2.0` dans le payload, compatible HA Tunnel Plus, HTTP Injector, HTTP Custom...
 - **Expiration automatique** : Vérification précise chaque minute, verrouillage immédiat
 
@@ -41,23 +41,27 @@ Le bot est privé (admin seulement par défaut) :
 
 ---
 
-## 🚀 Installation "All-In-One" (Recommandé)
+## Installation tout-en-un
+
+L'installation cible un serveur Linux Debian/Ubuntu avec accès Internet, `sudo` et systemd. Elle installe les dépendances, ZiVPN, le proxy SSH, le bot Telegram, les services systemd, les groupes de comptes et les règles firewall.
 
 Le script `install.sh` détecte votre architecture (amd64, arm64, arm), installe **tout** automatiquement :
 
 ```bash
 git clone https://github.com/TheShellMaster/monitoring-bot.git
 cd monitoring-bot
-sudo bash install.sh
+bash install.sh
 ```
+
+Le script demande les privilèges `sudo` quand nécessaire. Il ne faut pas exécuter le dépôt avec `sudo git clone`, afin que l'utilisateur du service puisse lire les fichiers du projet.
 
 **Ce que le script fait :**
 1. Installe les dépendances (Python, OpenSSH, iptables, tzdata...)
 2. Télécharge ZiVPN pour votre architecture dans `/usr/local/bin/`
 3. Génère les certificats SSL dans `/etc/zivpn/`
 4. Configure ZiVPN sur le port **443 UDP**
-5. Configure les permissions sudoers (bot → systemctl, useradd, iptables, sed...)
-6. Active `PasswordAuthentication` dans OpenSSH
+5. Configure les permissions sudoers nécessaires au bot et valide leur syntaxe
+6. Désactive l'authentification SSH par mot de passe globalement et l'autorise uniquement pour les membres du groupe SSH dédié
 7. Ouvre les ports dans le firewall (ufw / firewalld / iptables)
 8. Crée l'environnement Python et installe les dépendances
 9. Valide votre token Telegram via l'API avant de continuer
@@ -65,7 +69,15 @@ sudo bash install.sh
 11. Crée les services systemd : `monitoring-bot.service`, `zivpn.service`, `ssh-proxy.service`
 12. Sauvegarde les règles iptables (`iptables-persistent`)
 
-*(Le script vous demandera votre Token Telegram, le fuseau horaire, l'ID admin Telegram et le nom d'utilisateur système).*
+Le script demande le token Telegram, le fuseau horaire, l'ID admin Telegram et l'utilisateur système des services. Le fichier `.env_bot` est créé avec les permissions `600` et n'est pas versionné.
+
+Les groupes sont configurables avant l'installation :
+
+```bash
+SSH_USERS_GROUP=sshusers VPN_USERS_GROUP=vpnusers bash install.sh
+```
+
+Les bases SQLite sont stockées à côté du code (`ssh_accounts.db` et `vpn_accounts.db`). Les gestionnaires resynchronisent les groupes Linux depuis ces bases au démarrage; un ancien membre d'un groupe dédié est retiré automatiquement.
 
 ---
 
@@ -82,6 +94,19 @@ echo "TELEGRAM_BOT_TOKEN=votre_token_ici" > .env_bot
 echo "TZ=Ville/Continent" >> .env_bot   # ex: Africa/Douala
 ./venv/bin/python3 monitoring-bot.py
 ```
+
+Cette méthode ne configure pas ZiVPN, le proxy SSH, OpenSSH, sudoers ou le firewall. Pour un serveur complet, utilisez `install.sh`.
+
+## Vérification après installation
+
+```bash
+sudo systemctl is-active monitoring-bot.service zivpn.service ssh-proxy.service ssh
+sudo sshd -T -C user=compte_ssh,host=localhost,addr=127.0.0.1 \
+  | grep -E 'passwordauthentication|pubkeyauthentication'
+getent group sshusers vpnusers
+```
+
+Un compte SSH doit appartenir au groupe SSH configuré et avoir `passwordauthentication yes`. Un compte ZiVPN doit appartenir au groupe VPN configuré et avoir `passwordauthentication no` côté OpenSSH.
 
 ## Obtenir un token Telegram
 1. Ouvrez Telegram et cherchez [@BotFather](https://t.me/BotFather)

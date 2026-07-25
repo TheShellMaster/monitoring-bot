@@ -20,6 +20,8 @@ echo "Utilisateur systeme detecte : $USER_DETECTED"
 read -p "Nom d'utilisateur pour les services (Entree = $USER_DETECTED) : " USER_INPUT
 USER_CURRENT="${USER_INPUT:-$USER_DETECTED}"
 BOT_DIR=$(pwd)
+SSH_USERS_GROUP="${SSH_USERS_GROUP:-sshusers}"
+VPN_USERS_GROUP="${VPN_USERS_GROUP:-vpnusers}"
 
 # ── [1] Dépendances système ──
 step 1 9 "Mise à jour et installation des dépendances"
@@ -113,21 +115,38 @@ SUDOERS_LINE="$USER_CURRENT ALL=(ALL) NOPASSWD: \
   /usr/bin/systemctl stop ssh-proxy.service, \
   /usr/bin/systemctl restart ssh-proxy.service, \
   /usr/bin/systemctl is-active ssh-proxy.service, \
-  /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, \
+  /usr/sbin/groupadd, /usr/sbin/gpasswd, /usr/sbin/useradd, /usr/sbin/userdel, /usr/sbin/usermod, \
   /usr/sbin/chpasswd, /usr/bin/chage, /usr/bin/pkill, \
   /usr/bin/cat /etc/zivpn/config.json, /usr/bin/tee /etc/zivpn/config.json, \
   /usr/bin/tee /etc/security/limits.conf, /usr/bin/sed, \
   /usr/sbin/iptables, /sbin/iptables"
 echo "$SUDOERS_LINE" | sudo tee /etc/sudoers.d/bot-vpn >/dev/null
 sudo chmod 440 /etc/sudoers.d/bot-vpn
+sudo visudo -cf /etc/sudoers.d/bot-vpn >/dev/null || { err "Configuration sudoers invalide"; exit 1; }
 
 # ── [6b] OpenSSH ──
 step 6b 9 "Configuration OpenSSH (PasswordAuthentication)"
+sudo groupadd -f "$SSH_USERS_GROUP"
+sudo groupadd -f "$VPN_USERS_GROUP"
 sudo sed -i 's/^#\?PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
-sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+sudo sed -i 's/^#\?PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config
 for f in /etc/ssh/sshd_config.d/*.conf; do
-    [ -f "$f" ] && sudo sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' "$f"
+    [ -f "$f" ] && sudo sed -i 's/^PasswordAuthentication.*/PasswordAuthentication no/' "$f"
 done
+
+# Remove only blocks managed by this installer, plus the legacy VPN block from
+# older versions. Other administrator-defined Match blocks remain untouched.
+sudo sed -i '/^# BEGIN monitoring-bot ssh groups$/,/^# END monitoring-bot ssh groups$/d' /etc/ssh/sshd_config
+sudo sed -i "/^Match Group ${VPN_USERS_GROUP}$/,+2d" /etc/ssh/sshd_config
+sudo tee -a /etc/ssh/sshd_config >/dev/null <<EOF
+
+# BEGIN monitoring-bot ssh groups
+Match Group ${SSH_USERS_GROUP}
+    PasswordAuthentication yes
+    PubkeyAuthentication no
+# END monitoring-bot ssh groups
+EOF
+sudo sshd -t || { err "Configuration OpenSSH invalide"; exit 1; }
 sudo systemctl enable ssh 2>/dev/null || sudo systemctl enable sshd 2>/dev/null || true
 sudo systemctl restart ssh 2>/dev/null || sudo systemctl restart sshd 2>/dev/null || true
 
@@ -189,6 +208,8 @@ fi
 
 echo "TELEGRAM_BOT_TOKEN=$BOT_TOKEN" > .env_bot
 echo "TZ=$TZ_INPUT" >> .env_bot
+echo "SSH_USERS_GROUP=$SSH_USERS_GROUP" >> .env_bot
+echo "VPN_USERS_GROUP=$VPN_USERS_GROUP" >> .env_bot
 
 # ID Admin Telegram
 echo ""
@@ -205,6 +226,8 @@ if [ -n "$ADMIN_ID" ]; then
 else
     echo "  -> Tu pourras ajouter ADMIN_CHAT_ID dans .env_bot plus tard"
 fi
+sudo chown "$USER_CURRENT":"$USER_CURRENT" .env_bot
+sudo chmod 600 .env_bot
 
 # Service monitoring-bot
 sudo tee /etc/systemd/system/monitoring-bot.service > /dev/null <<EOF

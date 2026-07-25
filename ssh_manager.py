@@ -17,6 +17,7 @@ log = logging.getLogger(__name__)
 _DIR = os.path.dirname(os.path.abspath(__file__))
 DB_PATH = os.getenv("SSH_DB_PATH", os.path.join(_DIR, "ssh_accounts.db"))
 LIMITS_CONF = "/etc/security/limits.conf"
+SSH_GROUP = os.getenv("SSH_USERS_GROUP", "sshusers")
 TZ = zoneinfo.ZoneInfo(os.getenv("TZ", "Africa/Douala"))
 
 MOCK_MODE = False
@@ -37,6 +38,59 @@ def _run(cmd, check=True, **kwargs):
     except Exception as e:
         log.error(f"Erreur commande SSH {cmd}: {e}")
         return False
+
+def _ensure_group():
+    if MOCK_MODE:
+        return True
+    try:
+        r = subprocess.run(["getent", "group", SSH_GROUP], capture_output=True, timeout=5)
+        if r.returncode == 0:
+            return True
+    except Exception:
+        pass
+    return _run(["sudo", "-n", "groupadd", "-f", SSH_GROUP])
+
+def _add_to_ssh_group(username):
+    if MOCK_MODE:
+        return True
+    if not _ensure_group():
+        return False
+    return _run(["sudo", "-n", "usermod", "-aG", SSH_GROUP, username])
+
+def _group_members():
+    try:
+        result = subprocess.run(
+            ["getent", "group", SSH_GROUP], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return set()
+        fields = result.stdout.strip().split(":")
+        return {name for name in fields[3].split(",") if name} if len(fields) > 3 else set()
+    except Exception:
+        return set()
+
+def _remove_from_ssh_group(username):
+    if MOCK_MODE:
+        return True
+    return _run(["sudo", "-n", "gpasswd", "-d", username, SSH_GROUP])
+
+def _sync_ssh_group_members():
+    if MOCK_MODE:
+        return
+    try:
+        _ensure_group()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT username FROM ssh_users WHERE locked=0")
+        users = [row[0] for row in c.fetchall()]
+        conn.close()
+        active_users = {username for username in users if _user_exists(username)}
+        for username in active_users:
+            _add_to_ssh_group(username)
+        for username in _group_members() - active_users:
+            _remove_from_ssh_group(username)
+    except Exception as e:
+        log.error(f"Erreur sync groupe SSH: {e}")
 
 
 # ──────────── Helpers limites connexion (PAM) ────────────
@@ -187,6 +241,7 @@ def init_db():
         pass
     conn.commit()
     conn.close()
+    _sync_ssh_group_members()
     _sync_iptables()
 
 
@@ -194,20 +249,36 @@ def init_db():
 
 def add_user(username, password, expires_at_str, max_conn=0, data_limit_mb=0):
     """Crée un compte Linux SSH avec limites de connexion et data."""
-    username = username.lower()
+    username = username.strip().lower()
     try:
         expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M")
     except ValueError:
         return False, "Format de date invalide. Utiliser YYYY-MM-DD HH:MM"
 
+    if get_user(username):
+        return False, f"Le compte SSH {username} existe deja dans la base."
+    if not MOCK_MODE and _user_exists(username):
+        return False, (
+            f"L'utilisateur Linux {username} existe deja. "
+            "Choisis un autre nom ou supprime d'abord le compte existant."
+        )
+
+    created_system_user = False
     try:
-        _run(["sudo", "useradd", "-M", "-s", "/bin/false", username])
+        if not _run(["sudo", "useradd", "-M", "-s", "/bin/false", username]):
+            raise Exception(f"Impossible de creer l'utilisateur Linux {username}")
+        created_system_user = True
         if not MOCK_MODE:
             proc = subprocess.Popen(["sudo", "chpasswd"], stdin=subprocess.PIPE, text=True)
             proc.communicate(f"{username}:{password}", timeout=5)
-        _run(["sudo", "chage", "-E", "-1", username])
-        _run(["sudo", "usermod", "-U", username])
-        _run(["sudo", "usermod", "-aG", "vpnusers", username])
+            if proc.returncode != 0:
+                raise Exception("Impossible de definir le mot de passe SSH")
+        if not _run(["sudo", "chage", "-E", "-1", username]):
+            raise Exception("Impossible de definir l'expiration systeme")
+        if not _run(["sudo", "usermod", "-U", username]):
+            raise Exception("Impossible de deverrouiller l'utilisateur Linux")
+        if not _add_to_ssh_group(username):
+            raise Exception(f"Impossible d'ajouter l'utilisateur au groupe {SSH_GROUP}")
 
         _limits_conf_add(username, max_conn)
         if data_limit_mb > 0:
@@ -224,7 +295,8 @@ def add_user(username, password, expires_at_str, max_conn=0, data_limit_mb=0):
         conn.close()
         return True, "Compte SSH créé avec succès."
     except Exception as e:
-        _run(["sudo", "userdel", "-f", username])
+        if created_system_user:
+            _run(["sudo", "userdel", "-f", username])
         return False, str(e)
 
 

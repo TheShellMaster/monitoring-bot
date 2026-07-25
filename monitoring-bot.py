@@ -15,6 +15,15 @@ ADMIN_LINK = "t.me/King_premium_N5"
 
 logging.basicConfig(level=logging.INFO, style="{", format="{asctime} [{levelname}] {message}")
 log = logging.getLogger(__name__)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+class _TelegramTokenFilter(logging.Filter):
+    def filter(self, record):
+        return "api.telegram.org/bot" not in record.getMessage()
+
+for handler in logging.getLogger().handlers:
+    handler.addFilter(_TelegramTokenFilter())
 
 chat_ids = set()
 if CHAT_ID_FILE.exists():
@@ -721,7 +730,7 @@ async def ssh_cb(upd: Update, ctx: ContextTypes.DEFAULT_TYPE):
             await q.message.reply_text("Compte introuvable.")
             return ConversationHandler.END
 
-        conn = sqlite3.connect("ssh_accounts.db")
+        conn = sqlite3.connect(ssh_manager.DB_PATH)
         c = conn.cursor()
         c.execute("SELECT max_conn, data_limit_mb, data_used_mb FROM ssh_users WHERE username=?", (user,))
         extra = c.fetchone()
@@ -1023,7 +1032,7 @@ async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
 
     # Vérification quota data SSH
     try:
-        conn = sqlite3.connect("ssh_accounts.db")
+        conn = sqlite3.connect(ssh_manager.DB_PATH)
         c = conn.cursor()
         c.execute("SELECT username, data_limit_mb, data_used_mb FROM ssh_users WHERE data_limit_mb > 0")
         for row in c.fetchall():
@@ -1031,7 +1040,7 @@ async def alert_job(ctx: ContextTypes.DEFAULT_TYPE):
             ssh_manager.update_data_used(uname)
         conn.close()
         # Re-request with updated values
-        conn = sqlite3.connect("ssh_accounts.db")
+        conn = sqlite3.connect(ssh_manager.DB_PATH)
         c = conn.cursor()
         c.execute("SELECT username, data_limit_mb, data_used_mb FROM ssh_users WHERE data_limit_mb > 0")
         for row in c.fetchall():

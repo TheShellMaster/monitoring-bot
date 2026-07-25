@@ -15,8 +15,10 @@ def _now():
     return datetime.now(TZ)
 
 
-DB_PATH = "vpn_accounts.db"
+_DIR = os.path.dirname(os.path.abspath(__file__))
+DB_PATH = os.getenv("VPN_DB_PATH", os.path.join(_DIR, "vpn_accounts.db"))
 ZIVPN_CONF = "/etc/zivpn/config.json"
+VPN_GROUP = os.getenv("VPN_USERS_GROUP", "vpnusers")
 MOCK_MODE = not os.path.exists(ZIVPN_CONF)
 
 def init_db():
@@ -38,6 +40,8 @@ def init_db():
         pass
     conn.commit()
     conn.close()
+    _sync_vpn_group_members()
+    _sync_system_users()
 
 def _update_zivpn_config(username, action="add"):
     if MOCK_MODE:
@@ -69,25 +73,177 @@ def _update_zivpn_config(username, action="add"):
         log.error(f"Error updating zivpn config: {e}")
         return False
 
+def _db_user_exists(username):
+    conn = sqlite3.connect(DB_PATH)
+    try:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM vpn_users WHERE username=?", (username,))
+        return c.fetchone() is not None
+    finally:
+        conn.close()
+
+def _sudo_run(cmd, check=True):
+    if MOCK_MODE:
+        log.info(f"[MOCK] {' '.join(cmd)}")
+        return True
+    try:
+        subprocess.run(cmd, check=check, timeout=5)
+        return True
+    except Exception as e:
+        log.error(f"Error running command {cmd}: {e}")
+        return False
+
+def _ensure_group():
+    try:
+        r = subprocess.run(["getent", "group", VPN_GROUP], capture_output=True, timeout=5)
+        if r.returncode == 0:
+            return True
+    except Exception:
+        pass
+    return _sudo_run(["sudo", "-n", "groupadd", "-f", VPN_GROUP])
+
+def _add_to_vpn_group(username):
+    if not _ensure_group():
+        return False
+    return _sudo_run(["sudo", "-n", "usermod", "-aG", VPN_GROUP, username])
+
+def _group_members():
+    try:
+        result = subprocess.run(
+            ["getent", "group", VPN_GROUP], capture_output=True, text=True, timeout=5
+        )
+        if result.returncode != 0:
+            return set()
+        fields = result.stdout.strip().split(":")
+        return {name for name in fields[3].split(",") if name} if len(fields) > 3 else set()
+    except Exception:
+        return set()
+
+def _remove_from_vpn_group(username):
+    if MOCK_MODE:
+        return True
+    return _sudo_run(["sudo", "-n", "gpasswd", "-d", username, VPN_GROUP])
+
+def _sync_vpn_group_members():
+    try:
+        _ensure_group()
+        conn = sqlite3.connect(DB_PATH)
+        c = conn.cursor()
+        c.execute("SELECT username FROM vpn_users WHERE locked=0")
+        users = [row[0] for row in c.fetchall()]
+        conn.close()
+        active_users = {username for username in users if _user_exists(username)}
+        for username in active_users:
+            _add_to_vpn_group(username)
+        for username in _group_members() - active_users:
+            _remove_from_vpn_group(username)
+    except Exception as e:
+        log.error(f"Error syncing VPN group: {e}")
+
+def _ssh_db_user_exists(username):
+    ssh_db_path = os.getenv("SSH_DB_PATH", os.path.join(_DIR, "ssh_accounts.db"))
+    if not os.path.exists(ssh_db_path):
+        return False
+    conn = sqlite3.connect(ssh_db_path)
+    try:
+        c = conn.cursor()
+        c.execute("SELECT 1 FROM ssh_users WHERE username=?", (username,))
+        return c.fetchone() is not None
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
+
+def _get_vpn_group_users():
+    try:
+        r = subprocess.run(["getent", "group", VPN_GROUP], capture_output=True, text=True, timeout=5)
+        if r.returncode != 0:
+            return []
+        parts = r.stdout.strip().split(":")
+        if len(parts) < 4 or not parts[3]:
+            return []
+        return [u.strip() for u in parts[3].split(",") if u.strip()]
+    except Exception:
+        return []
+
+def _system_expiry(username):
+    if MOCK_MODE:
+        return "2099-12-31 23:59:00"
+    try:
+        r = subprocess.run(["sudo", "-n", "chage", "-l", username], capture_output=True, text=True, timeout=5)
+        for line in r.stdout.splitlines():
+            if line.startswith("Account expires"):
+                raw = line.split(":", 1)[1].strip()
+                if raw.lower() == "never":
+                    return "2099-12-31 23:59:00"
+                for fmt in ("%b %d, %Y", "%Y-%m-%d"):
+                    try:
+                        return datetime.strptime(raw, fmt).strftime("%Y-%m-%d 23:59:00")
+                    except ValueError:
+                        pass
+    except Exception as e:
+        log.error(f"Error reading expiry for {username}: {e}")
+    return "2099-12-31 23:59:00"
+
+def _sync_system_users():
+    """Réimporte les comptes ZiVPN système absents de la DB.
+
+    On ignore les utilisateurs déjà présents dans ssh_accounts.db pour éviter
+    de mélanger les deux CRM si une ancienne installation partageait le groupe.
+    """
+    for username in _get_vpn_group_users():
+        username = username.strip().lower()
+        if not username or _db_user_exists(username) or _ssh_db_user_exists(username):
+            continue
+        try:
+            conn = sqlite3.connect(DB_PATH)
+            c = conn.cursor()
+            c.execute(
+                "INSERT INTO vpn_users (username, password, expires_at) VALUES (?, ?, ?)",
+                (username, "inconnu", _system_expiry(username)),
+            )
+            conn.commit()
+            conn.close()
+            _update_zivpn_config(username, "add")
+            log.info(f"Synced existing ZiVPN user {username} into DB")
+        except sqlite3.IntegrityError:
+            pass
+        except Exception as e:
+            log.error(f"Error syncing ZiVPN user {username}: {e}")
+
 def add_user(username, password, expires_at_str):
+    username = username.strip().lower()
     try:
         expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M")
     except:
         return False, "Format de date invalide."
+
+    if _db_user_exists(username):
+        return False, f"Le compte ZiVPN {username} existe deja dans la base."
+    if not MOCK_MODE and _user_exists(username):
+        return False, (
+            f"L'utilisateur Linux {username} existe deja. "
+            "Choisis un autre nom ou supprime d'abord le compte existant."
+        )
     
     exp_str = expires_at.strftime("%Y-%m-%d")
+    created_system_user = False
     
     try:
         if MOCK_MODE:
             log.info(f"[MOCK] useradd -M -s /bin/false {username}")
         else:
             subprocess.run(["sudo", "useradd", "-M", "-s", "/bin/false", username], check=True, timeout=5)
+            created_system_user = True
             proc = subprocess.Popen(["sudo", "chpasswd"], stdin=subprocess.PIPE, text=True)
             proc.communicate(f"{username}:{password}", timeout=5)
             if proc.returncode != 0: raise Exception("Failed to set password")
             subprocess.run(["sudo", "chage", "-E", exp_str, username], check=True, timeout=5)
+            if not _add_to_vpn_group(username):
+                raise Exception(f"Failed to add user to {VPN_GROUP}")
             
-        _update_zivpn_config(username, "add")
+        if not _update_zivpn_config(username, "add"):
+            raise Exception("Impossible de mettre a jour la configuration ZiVPN")
             
         conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
@@ -100,7 +256,7 @@ def add_user(username, password, expires_at_str):
         return True, "Compte cree avec succes."
     except Exception as e:
         log.error(f"Error adding user: {e}")
-        if not MOCK_MODE:
+        if created_system_user:
             subprocess.run(["sudo", "userdel", "-r", username], stderr=subprocess.DEVNULL, timeout=5)
         return False, str(e)
 
