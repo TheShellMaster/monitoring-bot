@@ -118,9 +118,19 @@ Un compte SSH doit appartenir au groupe SSH configuré et avoir `passwordauthent
 
 | Composant | Architecture |
 |-----------|-------------|
-| ZiVPN | Linux x86_64, ARM64, ARM |
+| ZiVPN | Linux x86_64, ARM64 (`aarch64`), ARM 32 bits (`armv7l`) |
 | SSH Proxy | Linux (Python asyncio) |
 | Bot | Linux, Windows, macOS |
+
+### Serveurs ARM
+
+Les serveurs ARM64 et ARMv7 standards sont pris en charge. `install.sh` détecte automatiquement l'architecture avec `uname -m` et télécharge le binaire ZiVPN adapté :
+
+- `x86_64` : binaire Linux AMD64 ;
+- `aarch64` : binaire Linux ARM64 ;
+- `armv7l` : binaire Linux ARM 32 bits.
+
+Le reste du projet utilise Python et ne dépend pas d'un binaire spécifique à l'architecture. Le serveur doit utiliser Debian ou Ubuntu, disposer de `sudo`, systemd et d'un accès Internet. Les architectures ARM non listées, comme ARMv6, et les systèmes sans systemd ne sont pas pris en charge automatiquement.
 
 ---
 
